@@ -1,13 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
+import DashboardSkeleton from '../../../components/skeleton_loading/Dashboard';
+import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 
 type WeatherApiResponse = {
   current?: {
     temperature_2m?: number;
     weather_code?: number;
+    relative_humidity_2m?: number;
+    wind_speed_10m?: number;
+    uv_index?: number;
+    dew_point_2m?: number;
   };
+};
+
+type WeatherDetails = {
+  humidity: number | null;
+  windSpeed: number | null;
+  uvIndex: number | null;
+  dewPointC: number | null;
 };
 
 type WeatherVisual = {
@@ -55,6 +68,12 @@ export default function Dashboard() {
   const [temperatureC, setTemperatureC] = useState<number | null>(null);
   const [weatherCode, setWeatherCode] = useState<number | undefined>(undefined);
   const [unit, setUnit] = useState<'C' | 'F'>('C');
+  const [details, setDetails] = useState<WeatherDetails>({
+    humidity: null,
+    windSpeed: null,
+    uvIndex: null,
+    dewPointC: null,
+  });
 
   useEffect(() => {
     const timerId = setInterval(() => setNow(new Date()), 1000);
@@ -92,7 +111,7 @@ export default function Dashboard() {
         }
 
         const weatherResponse = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&timezone=auto`
+          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m,uv_index,dew_point_2m&timezone=auto`
         );
 
         if (!weatherResponse.ok) {
@@ -108,6 +127,20 @@ export default function Dashboard() {
 
         setTemperatureC(currentWeather.temperature_2m);
         setWeatherCode(currentWeather.weather_code);
+        setDetails({
+          humidity:
+            typeof currentWeather.relative_humidity_2m === 'number'
+              ? currentWeather.relative_humidity_2m
+              : null,
+          windSpeed:
+            typeof currentWeather.wind_speed_10m === 'number'
+              ? currentWeather.wind_speed_10m
+              : null,
+          uvIndex: typeof currentWeather.uv_index === 'number' ? currentWeather.uv_index : null,
+          dewPointC:
+            typeof currentWeather.dew_point_2m === 'number' ? currentWeather.dew_point_2m : null,
+        });
+        // no-op here — background updated by effect below
       } catch (error) {
         const message =
           error instanceof Error
@@ -116,6 +149,12 @@ export default function Dashboard() {
         setErrorMessage(message);
         setWeatherCode(undefined);
         setLocationName('Location unavailable');
+        setDetails({
+          humidity: null,
+          windSpeed: null,
+          uvIndex: null,
+          dewPointC: null,
+        });
       } finally {
         setIsLoading(false);
       }
@@ -123,6 +162,20 @@ export default function Dashboard() {
 
     loadWeather();
   }, []);
+
+  // update global background when weather or time changes
+  const { setFromWeather } = useWeatherBackground();
+  const currentHour = useMemo(() => now.getHours(), [now]);
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    try {
+      setFromWeather(weatherCode, currentHour);
+    } catch {
+      // noop if provider not available
+    }
+  }, [isLoading, weatherCode, currentHour, setFromWeather]);
 
   const displayedTime = useMemo(
     () =>
@@ -141,52 +194,84 @@ export default function Dashboard() {
 
   const weatherVisual = useMemo(() => weatherCodeToVisual(weatherCode), [weatherCode]);
 
+  const timeOfDay = useMemo(() => {
+    const hour = now.getHours();
+    if (hour >= 5 && hour < 12) return { label: 'Morning', iconName: 'sunny' as const, color: '#f59e0b' };
+    if (hour >= 12 && hour < 17) return { label: 'Afternoon', iconName: 'partly-sunny' as const, color: '#fb923c' };
+    if (hour >= 17 && hour < 19) return { label: 'Evening', iconName: 'moon' as const, color: '#7c3aed' };
+    return { label: 'Night', iconName: 'moon' as const, color: '#2563eb' };
+  }, [now]);
+
+  const displayedDewPoint = useMemo(() => {
+    if (details.dewPointC === null) return '--';
+    if (unit === 'C') return `${details.dewPointC.toFixed(1)} °C`;
+    return `${celsiusToFahrenheit(details.dewPointC).toFixed(1)} °F`;
+  }, [details.dewPointC, unit]);
+
+  const weatherDetailItems = useMemo(
+    () => [
+      {
+        label: 'Humidity',
+        value: details.humidity === null ? '--' : `${details.humidity.toFixed(0)}%`,
+      },
+      {
+        label: 'Wind Speed',
+        value: details.windSpeed === null ? '--' : `${details.windSpeed.toFixed(1)} km/h`,
+      },
+      {
+        label: 'UV Index',
+        value: details.uvIndex === null ? '--' : details.uvIndex.toFixed(1),
+      },
+      {
+        label: 'Dew Point',
+        value: displayedDewPoint,
+      },
+    ],
+    [details.humidity, details.windSpeed, details.uvIndex, displayedDewPoint]
+  );
+
   if (isLoading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-slate-50">
-        <ActivityIndicator size="large" color="#2563eb" />
-        <Text className="mt-3 text-base text-slate-700">Loading weather data...</Text>
-      </View>
-    );
+    return <DashboardSkeleton />;
   }
 
   return (
-    <View className="flex-1 items-center justify-center bg-slate-50 px-6">
-      <Text className="mb-3 text-3xl font-bold text-slate-900">Current Weather</Text>
-
+    <ScrollView className="flex-1 bg-transparent" contentContainerClassName="items-center px-6 pt-14 pb-12">
+      <Text className="mb-3 text-center text-3xl font-bold text-slate-900">Current Weather</Text>
       <Text className="mb-1.5 text-center text-lg text-slate-700">{locationName}</Text>
-      <Text className="mb-5 text-4xl font-bold text-slate-800">{displayedTime}</Text>
+      <Text className="mb-2 text-center text-4xl font-bold text-slate-800">{displayedTime}</Text>
 
-      <View className="mb-2.5 flex-row items-center gap-3">
-        <Text className="text-[56px] font-extrabold leading-[62px] text-slate-900">
-          {displayedTemperature}°
-        </Text>
+      <View className="mb-2.5 flex-row items-center justify-center gap-3">
+        <Text className="text-[56px] font-extrabold leading-[62px] text-slate-900">{displayedTemperature}°</Text>
 
         <View className="flex-row overflow-hidden rounded-full border border-slate-300">
-          <Pressable
-            className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600' : 'bg-white'}`}
-            onPress={() => setUnit('C')}
-          >
+          <Pressable className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600/20' : 'bg-white/20'}`} onPress={() => setUnit('C')}>
             <Text className={`text-sm font-bold ${unit === 'C' ? 'text-white' : 'text-slate-800'}`}>C</Text>
           </Pressable>
 
-          <Pressable
-            className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600' : 'bg-white'}`}
-            onPress={() => setUnit('F')}
-          >
+          <Pressable className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600/20' : 'bg-white/20'}`} onPress={() => setUnit('F')}>
             <Text className={`text-sm font-bold ${unit === 'F' ? 'text-white' : 'text-slate-800'}`}>F</Text>
           </Pressable>
         </View>
       </View>
-
-      <View className="mt-2 flex-row items-center gap-2 rounded-full bg-white px-4 py-2">
+      <View className="mt-2 flex-row items-center justify-center gap-2 rounded-full border border-white/30 bg-white/15 px-4 py-2">
+        <Ionicons name={timeOfDay.iconName} size={22} color={timeOfDay.color} />
         <Ionicons name={weatherVisual.iconName} size={22} color={weatherVisual.iconColor} />
-        <Text className="text-xl font-semibold text-slate-700">{weatherVisual.label}</Text>
+        <Text className="text-xl font-semibold text-white/90">{weatherVisual.label}</Text>
+      </View>
+
+      <Text className="mt-8 text-2xl font-bold text-white">Weather Details</Text>
+      <View className="mt-3 flex-row flex-wrap justify-between gap-y-3">
+        {weatherDetailItems.map((item) => (
+          <View key={item.label} className="w-[48%] rounded-2xl border border-white/30 bg-white/15 p-4">
+            <Text className="mt-2 text-lg font-bold text-white">{item.value}</Text>
+            <Text className="text-sm font-medium text-white/70">{item.label}</Text>
+          </View>
+        ))}
       </View>
 
       {errorMessage ? (
-        <Text className="mt-4 text-center text-sm text-red-600">{errorMessage}</Text>
+        <Text className="mt-4 text-center text-sm text-red-200">{errorMessage}</Text>
       ) : null}
-    </View>
+    </ScrollView>
   );
 }

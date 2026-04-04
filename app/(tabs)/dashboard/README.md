@@ -7,9 +7,15 @@ This page shows the user's current weather information using **Open-Meteo** and 
 - Detects the user's current location using `expo-location`.
 - Reverse geocodes latitude/longitude into a readable place name.
 - Fetches current weather from Open-Meteo (`temperature_2m`, `weather_code`).
+- Shows `Weather Details` in a 2x2 grid:
+  - Humidity (`relative_humidity_2m`)
+  - Wind Speed (`wind_speed_10m`)
+  - UV Index (`uv_index`)
+  - Dew Point (`dew_point_2m`)
 - Displays live time (`HH:mm`) that updates every second.
 - Shows temperature in Celsius with a toggle to Fahrenheit.
 - Renders a **colored weather icon** based on Open-Meteo `weather_code`.
+- Uses a dashboard skeleton layout while loading weather/location data.
 
 ## Data Source
 
@@ -17,7 +23,7 @@ This page shows the user's current weather information using **Open-Meteo** and 
 - Query params used:
   - `latitude`
   - `longitude`
-  - `current=temperature_2m,weather_code`
+  - `current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m,uv_index,dew_point_2m`
   - `timezone=auto`
 
 ## Main File
