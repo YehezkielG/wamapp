@@ -1,27 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import DashboardSkeleton from '../../../components/skeleton_loading/Dashboard';
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
-
-type WeatherApiResponse = {
-  current?: {
-    temperature_2m?: number;
-    weather_code?: number;
-    relative_humidity_2m?: number;
-    wind_speed_10m?: number;
-    uv_index?: number;
-    dew_point_2m?: number;
-  };
-};
-
-type WeatherDetails = {
-  humidity: number | null;
-  windSpeed: number | null;
-  uvIndex: number | null;
-  dewPointC: number | null;
-};
+import Forecast12Hours from '../../../components/dashboard/Forecast12Hours';
+import { useWeatherStore, WEATHER_REFRESH_INTERVAL_MS } from '../../../lib/weather/weatherStore';
+import { useShallow } from 'zustand/react/shallow';
 
 type WeatherVisual = {
   label: string;
@@ -62,18 +46,27 @@ function celsiusToFahrenheit(valueInCelsius: number) {
 
 export default function Dashboard() {
   const [now, setNow] = useState(new Date());
-  const [isLoading, setIsLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [locationName, setLocationName] = useState('Detecting location...');
-  const [temperatureC, setTemperatureC] = useState<number | null>(null);
-  const [weatherCode, setWeatherCode] = useState<number | undefined>(undefined);
   const [unit, setUnit] = useState<'C' | 'F'>('C');
-  const [details, setDetails] = useState<WeatherDetails>({
-    humidity: null,
-    windSpeed: null,
-    uvIndex: null,
-    dewPointC: null,
-  });
+  const { data, isLoading, errorMessage } = useWeatherStore(
+    useShallow((state) => ({
+      data: state.data,
+      isLoading: state.isLoading,
+      errorMessage: state.errorMessage,
+    }))
+  );
+
+  const locationName = data?.locationName ?? 'Detecting location...';
+  const temperatureC = data?.temperatureC ?? null;
+  const weatherCode = data?.weatherCode;
+  const details =
+    data?.details ??
+    ({
+      humidity: null,
+      windSpeed: null,
+      uvIndex: null,
+      dewPointC: null,
+    } as const);
+  const forecastHours = data?.forecastHours ?? [];
 
   useEffect(() => {
     const timerId = setInterval(() => setNow(new Date()), 1000);
@@ -81,101 +74,17 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const loadWeather = async () => {
-      setIsLoading(true);
-      setErrorMessage(null);
-
-      try {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== 'granted') {
-          throw new Error('Location permission was denied.');
-        }
-
-        const location = await Location.getCurrentPositionAsync({});
-        const latitude = location.coords.latitude;
-        const longitude = location.coords.longitude;
-
-        const reverseGeocode = await Location.reverseGeocodeAsync({
-          latitude,
-          longitude,
-        });
-
-        const place = reverseGeocode[0];
-        const cityOrRegion = place?.city || place?.subregion || place?.region;
-        const country = place?.country;
-
-        if (cityOrRegion && country) {
-          setLocationName(`${cityOrRegion}, ${country}`);
-        } else {
-          setLocationName(`${latitude.toFixed(3)}, ${longitude.toFixed(3)}`);
-        }
-
-        const weatherResponse = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m,uv_index,dew_point_2m&timezone=auto`
-        );
-
-        // const weatherResponse = {
-        //   ok: true,
-        //   json: async () =>
-        //     ({
-        //       current: {
-        //   temperature_2m: 29.4,
-        //   weather_code: 2,
-        //   relative_humidity_2m: 78,
-        //   wind_speed_10m: 12.3,
-        //   uv_index: 6.1,
-        //   dew_point_2m: 24.2,
-        //       },
-        //     } as WeatherApiResponse),
-        // };
-
-        if (!weatherResponse.ok) {
-          throw new Error('Failed to fetch weather data.');
-        }
-
-        const weatherData = (await weatherResponse.json()) as WeatherApiResponse;
-        const currentWeather = weatherData.current;
-
-        if (typeof currentWeather?.temperature_2m !== 'number') {
-          throw new Error('Temperature data is unavailable.');
-        }
-
-        setTemperatureC(currentWeather.temperature_2m);
-        setWeatherCode(currentWeather.weather_code);
-        setDetails({
-          humidity:
-            typeof currentWeather.relative_humidity_2m === 'number'
-              ? currentWeather.relative_humidity_2m
-              : null,
-          windSpeed:
-            typeof currentWeather.wind_speed_10m === 'number'
-              ? currentWeather.wind_speed_10m
-              : null,
-          uvIndex: typeof currentWeather.uv_index === 'number' ? currentWeather.uv_index : null,
-          dewPointC:
-            typeof currentWeather.dew_point_2m === 'number' ? currentWeather.dew_point_2m : null,
-        });
-        // no-op here — background updated by effect below
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'An unexpected error occurred while loading weather data.';
-        setErrorMessage(message);
-        setWeatherCode(undefined);
-        setLocationName('Location unavailable');
-        setDetails({
-          humidity: null,
-          windSpeed: null,
-          uvIndex: null,
-          dewPointC: null,
-        });
-      } finally {
-        setIsLoading(false);
-      }
+    const runFetch = () => {
+      void useWeatherStore.getState().fetchWeather();
     };
 
-    loadWeather();
+    runFetch();
+
+    const refreshIntervalId = setInterval(() => {
+      runFetch();
+    }, WEATHER_REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(refreshIntervalId);
   }, []);
 
   // update global background when weather or time changes
@@ -272,7 +181,7 @@ export default function Dashboard() {
     [details.humidity, details.windSpeed, details.uvIndex, displayedDewPoint]
   );
 
-  if (isLoading) {
+  if (isLoading && !data) {
     return <DashboardSkeleton />;
   }
 
@@ -289,11 +198,11 @@ export default function Dashboard() {
         </Text>
 
         <View className={`flex-row overflow-hidden rounded-full border ${unitBorderClass}`}>
-          <Pressable className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600' : 'bg-white'}`} onPress={() => setUnit('C')}>
+          <Pressable className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600/50' : 'bg-white/50'}`} onPress={() => setUnit('C')}>
             <Text className={`text-sm font-bold ${unit === 'C' ? 'text-white' : 'text-slate-800'}`}>C</Text>
           </Pressable>
 
-          <Pressable className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600' : 'bg-white'}`} onPress={() => setUnit('F')}>
+          <Pressable className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600/50' : 'bg-white/50'}`} onPress={() => setUnit('F')}>
             <Text className={`text-sm font-bold ${unit === 'F' ? 'text-white' : 'text-slate-800'}`}>F</Text>
           </Pressable>
         </View>
@@ -314,6 +223,10 @@ export default function Dashboard() {
           </View>
         ))}
       </View>
+
+      {forecastHours.length ? (
+        <Forecast12Hours items={forecastHours} unit={unit} isDarkUi={isDarkUi} />
+      ) : null}
 
       {errorMessage ? (
         <Text className={`mt-4 text-center text-sm ${textColor.error}`}>{errorMessage}</Text>

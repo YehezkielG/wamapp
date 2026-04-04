@@ -1,48 +1,58 @@
-# Dashboard Page (`/dashboard`)
+# Dashboard (`/dashboard`)
 
-This page shows the user's current weather information using **Open-Meteo** and device location.
+Halaman ini menampilkan cuaca lokasi pengguna saat ini menggunakan **Open-Meteo** + lokasi perangkat (`expo-location`).
 
-## Features
+## Fitur Saat Ini
 
-- Detects the user's current location using `expo-location`.
-- Reverse geocodes latitude/longitude into a readable place name.
-- Fetches current weather from Open-Meteo (`temperature_2m`, `weather_code`).
-- Shows `Weather Details` in a 2x2 grid:
-  - Humidity (`relative_humidity_2m`)
-  - Wind Speed (`wind_speed_10m`)
-  - UV Index (`uv_index`)
-  - Dew Point (`dew_point_2m`)
-- Displays live time (`HH:mm`) that updates every second.
-- Shows temperature in Celsius with a toggle to Fahrenheit.
-- Renders a **colored weather icon** based on Open-Meteo `weather_code`.
-- Uses a dashboard skeleton layout while loading weather/location data.
+- Menampilkan lokasi pengguna saat ini (hasil reverse geocoding).
+- Menampilkan jam realtime (`HH:mm`) yang update setiap detik.
+- Menampilkan cuaca saat ini (ikon + label) berdasarkan `weather_code`.
+- Menampilkan suhu dan toggle unit **Celsius/Fahrenheit**.
+- Menampilkan kartu **Weather Details** (grid 2x2):
+  - Kelembapan (`relative_humidity_2m`)
+  - Kecepatan angin (`wind_speed_10m`)
+  - UV index (`uv_index`)
+  - Titik embun (`dew_point_2m`)
+- Menampilkan **forecast 12 jam ke depan** pada lokasi user saat ini.
+- Menggunakan skeleton loading di dashboard.
+- Warna teks adaptif agar tetap terbaca di mode latar terang/gelap.
 
-## Data Source
+## Arsitektur (Progress Terbaru)
 
-- API: `https://api.open-meteo.com/v1/forecast`
-- Query params used:
+- **UI halaman utama dashboard**: `app/(tabs)/dashboard/index.tsx`
+- **Komponen forecast 12 jam (terpusat)**: `components/dashboard/Forecast12Hours.tsx`
+- **Logic request cuaca/lokasi (terpusat di lib)**: `lib/weather/weatherApi.ts`
+- **State global + cache**: `lib/weather/weatherStore.ts` (Zustand)
+
+## Mekanisme Cache & Refresh
+
+- Dashboard menggunakan **Zustand** untuk menyimpan data cuaca terakhir.
+- Saat masuk ke halaman, data cache dipakai dulu bila masih fresh (tidak loading ulang terus).
+- Refresh data otomatis tiap **5 menit** (`WEATHER_REFRESH_INTERVAL_MS = 5 * 60 * 1000`).
+
+## Sumber Data API
+
+- Endpoint: `https://api.open-meteo.com/v1/forecast`
+- Query utama:
   - `latitude`
   - `longitude`
   - `current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m,uv_index,dew_point_2m`
+  - `hourly=temperature_2m,weather_code`
   - `timezone=auto`
 
-## Main File
+## Ringkasan Mapping Ikon Cuaca
 
-- `app/(tabs)/dashboard/index.tsx`
+- `0` -> Cerah (`sunny`)
+- `1-2` -> Cerah berawan (`partly-sunny`)
+- `3` -> Berawan (`cloudy`)
+- `45,48` -> Berkabut (`cloudy-outline`)
+- `51,53,55` -> Gerimis (`rainy-outline`)
+- `61,63,65` -> Hujan (`rainy`)
+- `71,73,75` -> Salju (`snow`)
+- `80,81,82` -> Hujan lebat (`rainy`)
+- `95,96,99` -> Badai petir (`thunderstorm`)
 
-## Weather Icon Mapping (summary)
+## Catatan
 
-- `0` -> Clear (`sunny`, amber)
-- `1-2` -> Partly Cloudy (`partly-sunny`, amber)
-- `3` -> Cloudy (`cloudy`, slate)
-- `45,48` -> Foggy (`cloudy-outline`, light slate)
-- `51,53,55` -> Drizzle (`rainy-outline`, sky)
-- `61,63,65` -> Rain (`rainy`, blue)
-- `71,73,75` -> Snow (`snow`, cyan)
-- `80,81,82` -> Heavy Rain (`rainy`, deep blue)
-- `95,96,99` -> Thunderstorm (`thunderstorm`, violet)
-
-## Notes
-
-- If location permission is denied, the page shows a friendly error message.
-- If weather data fails, the page keeps rendering with fallback values.
+- Jika izin lokasi ditolak, dashboard menampilkan pesan error yang ramah.
+- Jika request API gagal, dashboard tetap render dengan fallback aman.
