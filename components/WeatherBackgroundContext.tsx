@@ -35,7 +35,7 @@ function computeGradient(weatherCode?: number, hour?: number): ColorValue[] {
   const h = typeof hour === 'number' ? hour : new Date().getHours();
   if (h >= 5 && h < 12) return ['#ffedd5', '#ffd6a5']; // morning
   if (h >= 12 && h < 17) return ['#fef3c7', '#fde68a']; // afternoon
-  if (h >= 17 && h < 20) return ['#fed7aa', '#93c5fd']; // evening
+  if (h >= 17 && h < 19) return ['#fed7aa', '#93c5fd']; // evening
   return ['#0f172a', '#0ea5e9']; // night
 }
 
