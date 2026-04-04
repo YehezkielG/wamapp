@@ -10,8 +10,8 @@ interface TabItem {
 }
 
 const TABS: TabItem[] = [
-  { name: 'Explore', route: '/explore', icon: 'compass' },
   { name: 'Your Location', route: '/dashboard', icon: 'location' },
+  { name: 'Explore', route: '/explore', icon: 'compass' },
   { name: 'Chat', route: '/chat', icon: 'chatbubble' },
   { name: 'Settings', route: '/settings', icon: 'settings' },
 ];

@@ -1,11 +1,9 @@
 import { View, Text } from 'react-native';
 
-export default function Settings() {
+export default function Explore() {
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <Text>
-        explore
-      </Text>
+    <View className="flex-1 items-center justify-center bg-slate-50">
+      <Text className="text-xl font-semibold text-slate-800">Explore</Text>
     </View>
   );
 }
