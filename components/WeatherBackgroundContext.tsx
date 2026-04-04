@@ -13,6 +13,23 @@ function defaultGradient(): ColorValue[] {
 }
 
 function computeGradient(weatherCode?: number, hour?: number): ColorValue[] {
+  const h = typeof hour === 'number' ? hour : new Date().getHours();
+  const isNight = h >= 19 || h < 5;
+
+  if (isNight) {
+    if (weatherCode !== undefined && weatherCode !== null) {
+      if ([95, 96, 99].includes(weatherCode)) return ['#020617', '#312e81'];
+      if ([80, 81, 82, 61, 63, 65, 51, 53, 55].includes(weatherCode)) {
+        return ['#0f172a', '#1d4ed8'];
+      }
+      if ([71, 73, 75].includes(weatherCode)) return ['#0f172a', '#334155'];
+      if ([45, 48, 3, 1, 2].includes(weatherCode)) return ['#111827', '#374151'];
+      if (weatherCode === 0) return ['#0b1220', '#1e3a8a'];
+    }
+
+    return ['#0f172a', '#0ea5e9'];
+  }
+
   // Prefer weather-based gradients, then fall back to time of day.
   if (weatherCode !== undefined && weatherCode !== null) {
     // Thunderstorm
@@ -32,7 +49,6 @@ function computeGradient(weatherCode?: number, hour?: number): ColorValue[] {
   }
 
   // Fallback to time of day
-  const h = typeof hour === 'number' ? hour : new Date().getHours();
   if (h >= 5 && h < 12) return ['#ffedd5', '#ffd6a5']; // morning
   if (h >= 12 && h < 17) return ['#fef3c7', '#fde68a']; // afternoon
   if (h >= 17 && h < 19) return ['#fed7aa', '#93c5fd']; // evening

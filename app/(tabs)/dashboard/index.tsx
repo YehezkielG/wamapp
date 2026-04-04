@@ -114,6 +114,21 @@ export default function Dashboard() {
           `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m,uv_index,dew_point_2m&timezone=auto`
         );
 
+        // const weatherResponse = {
+        //   ok: true,
+        //   json: async () =>
+        //     ({
+        //       current: {
+        //   temperature_2m: 29.4,
+        //   weather_code: 2,
+        //   relative_humidity_2m: 78,
+        //   wind_speed_10m: 12.3,
+        //   uv_index: 6.1,
+        //   dew_point_2m: 24.2,
+        //       },
+        //     } as WeatherApiResponse),
+        // };
+
         if (!weatherResponse.ok) {
           throw new Error('Failed to fetch weather data.');
         }
@@ -168,14 +183,12 @@ export default function Dashboard() {
   const currentHour = useMemo(() => now.getHours(), [now]);
 
   useEffect(() => {
-    if (isLoading) return;
-
     try {
       setFromWeather(weatherCode, currentHour);
     } catch {
       // noop if provider not available
     }
-  }, [isLoading, weatherCode, currentHour, setFromWeather]);
+  }, [weatherCode, currentHour, setFromWeather]);
 
   const displayedTime = useMemo(
     () =>
@@ -194,11 +207,40 @@ export default function Dashboard() {
 
   const weatherVisual = useMemo(() => weatherCodeToVisual(weatherCode), [weatherCode]);
 
+  const isDarkUi = useMemo(() => {
+    const isNight = currentHour >= 19 || currentHour < 5;
+    const isStorm = weatherCode !== undefined && [95, 96, 99].includes(weatherCode);
+    return isNight || isStorm;
+  }, [currentHour, weatherCode]);
+
+  const textColor = useMemo(
+    () => ({
+      title: isDarkUi ? 'text-white' : 'text-slate-900',
+      primary: isDarkUi ? 'text-white' : 'text-slate-800',
+      secondary: isDarkUi ? 'text-white/85' : 'text-slate-700',
+      muted: isDarkUi ? 'text-white/70' : 'text-slate-500',
+      cardValue: isDarkUi ? 'text-white' : 'text-slate-900',
+      weatherLabel: isDarkUi ? 'text-white/90' : 'text-slate-800',
+      error: isDarkUi ? 'text-red-200' : 'text-red-700',
+    }),
+    [isDarkUi]
+  );
+
+  const surfaceClass = useMemo(
+    () =>
+      isDarkUi
+        ? 'border border-white/30 bg-white/15'
+        : 'border border-white/70 bg-white/60',
+    [isDarkUi]
+  );
+
+  const unitBorderClass = isDarkUi ? 'border-white/40' : 'border-slate-300';
+
   const timeOfDay = useMemo(() => {
     const hour = now.getHours();
     if (hour >= 5 && hour < 12) return { label: 'Morning', iconName: 'sunny' as const, color: '#f59e0b' };
     if (hour >= 12 && hour < 17) return { label: 'Afternoon', iconName: 'partly-sunny' as const, color: '#fb923c' };
-    if (hour >= 17 && hour < 19) return { label: 'Evening', iconName: 'moon' as const, color: '#7c3aed' };
+    if (hour >= 17 && hour < 20) return { label: 'Evening', iconName: 'moon' as const, color: '#7c3aed' };
     return { label: 'Night', iconName: 'moon' as const, color: '#2563eb' };
   }, [now]);
 
@@ -236,41 +278,45 @@ export default function Dashboard() {
 
   return (
     <ScrollView className="flex-1 bg-transparent" contentContainerClassName="items-center px-6 pt-14 pb-12">
-      <Text className="mb-3 text-center text-3xl font-bold text-slate-900">Current Weather</Text>
-      <Text className="mb-1.5 text-center text-lg text-slate-700">{locationName}</Text>
-      <Text className="mb-2 text-center text-4xl font-bold text-slate-800">{displayedTime}</Text>
+      <Text className={`mb-3 text-center text-3xl font-bold ${textColor.title}`}>Current Weather</Text>
+
+      <Text className={`mb-1.5 text-center text-lg ${textColor.secondary}`}>{locationName}</Text>
+      <Text className={`mb-2 text-center text-4xl font-bold ${textColor.primary}`}>{displayedTime}</Text>
 
       <View className="mb-2.5 flex-row items-center justify-center gap-3">
-        <Text className="text-[56px] font-extrabold leading-[62px] text-slate-900">{displayedTemperature}°</Text>
+        <Text className={`text-[56px] font-extrabold leading-[62px] ${textColor.primary}`}>
+          {displayedTemperature}°
+        </Text>
 
-        <View className="flex-row overflow-hidden rounded-full border border-slate-300">
-          <Pressable className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600/20' : 'bg-white/20'}`} onPress={() => setUnit('C')}>
+        <View className={`flex-row overflow-hidden rounded-full border ${unitBorderClass}`}>
+          <Pressable className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600' : 'bg-white'}`} onPress={() => setUnit('C')}>
             <Text className={`text-sm font-bold ${unit === 'C' ? 'text-white' : 'text-slate-800'}`}>C</Text>
           </Pressable>
 
-          <Pressable className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600/20' : 'bg-white/20'}`} onPress={() => setUnit('F')}>
+          <Pressable className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600' : 'bg-white'}`} onPress={() => setUnit('F')}>
             <Text className={`text-sm font-bold ${unit === 'F' ? 'text-white' : 'text-slate-800'}`}>F</Text>
           </Pressable>
         </View>
       </View>
-      <View className="mt-2 flex-row items-center justify-center gap-2 rounded-full border border-white/30 bg-white/15 px-4 py-2">
+
+      <View className={`mt-2 flex-row items-center justify-center gap-2 rounded-full px-4 py-2 ${surfaceClass}`}>
         <Ionicons name={timeOfDay.iconName} size={22} color={timeOfDay.color} />
         <Ionicons name={weatherVisual.iconName} size={22} color={weatherVisual.iconColor} />
-        <Text className="text-xl font-semibold text-white/90">{weatherVisual.label}</Text>
+        <Text className={`text-xl font-semibold ${textColor.weatherLabel}`}>{weatherVisual.label}</Text>
       </View>
 
-      <Text className="mt-8 text-2xl font-bold text-white">Weather Details</Text>
+      <Text className={`mt-8 text-2xl font-bold ${textColor.title}`}>Weather Details</Text>
       <View className="mt-3 flex-row flex-wrap justify-between gap-y-3">
         {weatherDetailItems.map((item) => (
-          <View key={item.label} className="w-[48%] rounded-2xl border border-white/30 bg-white/15 p-4">
-            <Text className="mt-2 text-lg font-bold text-white">{item.value}</Text>
-            <Text className="text-sm font-medium text-white/70">{item.label}</Text>
+          <View key={item.label} className={`w-[48%] rounded-2xl p-4 ${surfaceClass}`}>
+            <Text className={`mt-2 text-lg font-bold ${textColor.cardValue}`}>{item.value}</Text>
+            <Text className={`text-sm font-medium ${textColor.muted}`}>{item.label}</Text>
           </View>
         ))}
       </View>
 
       {errorMessage ? (
-        <Text className="mt-4 text-center text-sm text-red-200">{errorMessage}</Text>
+        <Text className={`mt-4 text-center text-sm ${textColor.error}`}>{errorMessage}</Text>
       ) : null}
     </ScrollView>
   );
