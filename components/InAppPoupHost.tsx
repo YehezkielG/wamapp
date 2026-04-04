@@ -8,6 +8,8 @@ type PopupState = Required<Pick<PopupPayload, 'message'>> & {
   durationMs: number;
 };
 
+let test="huihuhy";
+
 const TYPE_STYLES: Record<PopupType, { bg: string; border: string }> = {
   success: { bg: '#DCFCE7', border: '#16A34A' },
   error: { bg: '#FEE2E2', border: '#DC2626' },
