@@ -74,9 +74,6 @@ export function getChatThemeFromBackgroundColors(colors: ColorValue[]): ChatThem
 // ... (kode sebelumnya di _chatUtils.ts tetap dipertahankan) ...
 
 export async function sendMessageToRAGBackend(message: string): Promise<string> {
-  // Ganti URL ini dengan URL Railway kamu setelah di-deploy
-  // Untuk tes lokal di emulator Android gunakan: 'http://10.0.2.2:8000/api/chat'
-  // Untuk tes lokal di iOS/Web gunakan: 'http://127.0.0.1:8000/api/chat'
   // const API_URL = 'http://10.119.206.141:8000/api/chat'
   const API_URL = 'https://wamapp-api-chatbot-production.up.railway.app/api/chat'
   try {
