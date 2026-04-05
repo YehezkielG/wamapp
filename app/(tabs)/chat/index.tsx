@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
-import { getChatThemeFromBackgroundColors, type Message } from './_chatUtils';
+import {
+  getChatThemeFromBackgroundColors,
+  sendMessageToRAGBackend,
+  type Message,
+} from '../../../lib/chat/_chatUtils';
 
 const BOTTOM_TAB_BAR_HEIGHT = 78;
 
@@ -21,25 +25,42 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [inputHeight, setInputHeight] = useState(44);
+  const [isLoading, setIsLoading] = useState(false); // State untuk loading bot
   const chatTheme = getChatThemeFromBackgroundColors(colors);
 
-  const handleSend = () => {
-    const cleaned = inputText.trim();
-    if (!cleaned) return;
+  // Reference untuk autoscroll ke bawah
+  const flatListRef = useRef<FlatList>(null);
 
-    // Tambahkan pesan user ke UI
+  const handleSend = async () => {
+    const cleaned = inputText.trim();
+    if (!cleaned || isLoading) return; // Cegah spam klik saat loading
+
+    // 1. Tambahkan pesan user
     setMessages((prev) => [...prev, { id: Date.now().toString(), text: cleaned, sender: 'user' }]);
     setInputText('');
     setInputHeight(44);
 
-    // TODO: Panggil fungsi RAG API kamu di sini nanti
+    // 2. Mulai loading bot
+    setIsLoading(true);
+
+    // 3. Panggil fungsi modular dari utils
+    const botReply = await sendMessageToRAGBackend(cleaned);
+
+    // 4. Tambahkan balasan bot
+    setMessages((prev) => [
+      ...prev,
+      { id: (Date.now() + 1).toString(), text: botReply, sender: 'bot' },
+    ]);
+
+    // 5. Matikan loading
+    setIsLoading(false);
   };
 
   return (
     <SafeAreaView
       className="flex-1 bg-transparent"
       style={{ paddingBottom: BOTTOM_TAB_BAR_HEIGHT }}>
-      {/* Header WAMchat di pojok kiri atas */}
+      {/* Header WAMchat */}
       <View className="px-4 py-4">
         <Text className="text-xl font-bold" style={{ color: chatTheme.titleColor }}>
           WAMchat
@@ -52,10 +73,58 @@ export default function Chat() {
         className="flex-1">
         {/* Area Daftar Pesan */}
         <FlatList
+          ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
           className="flex-1 px-3"
           contentContainerStyle={{ paddingTop: 10, paddingBottom: 20 }}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          ListFooterComponent={
+            isLoading ? (
+              <View className="pt-2">
+                <Text className="mb-2 text-xs" style={{ color: chatTheme.placeholder }}>
+                  generating a response...
+                </Text>
+
+                <View
+                  className="max-w-[82%] self-start rounded-2xl rounded-tl-sm p-4"
+                  style={{ backgroundColor: chatTheme.botBubble }}>
+                  <View
+                    className="mb-3 h-4 rounded-full"
+                    style={{
+                      width: '92%',
+                      backgroundColor: chatTheme.inputBackground,
+                      opacity: 0.9,
+                    }}
+                  />
+                  <View
+                    className="mb-3 h-4 rounded-full"
+                    style={{
+                      width: '85%',
+                      backgroundColor: chatTheme.inputBackground,
+                      opacity: 0.85,
+                    }}
+                  />
+                  <View
+                    className="mb-3 h-4 rounded-full"
+                    style={{
+                      width: '76%',
+                      backgroundColor: chatTheme.inputBackground,
+                      opacity: 0.8,
+                    }}
+                  />
+                  <View
+                    className="h-4 rounded-full"
+                    style={{
+                      width: '54%',
+                      backgroundColor: chatTheme.inputBackground,
+                      opacity: 0.75,
+                    }}
+                  />
+                </View>
+              </View>
+            ) : null
+          }
           renderItem={({ item }) => (
             <View
               className={`my-1 max-w-[80%] rounded-2xl p-3 ${item.sender === 'user' ? 'self-end rounded-tr-sm' : 'self-start rounded-tl-sm'}`}
@@ -73,7 +142,6 @@ export default function Chat() {
 
         {/* Area Input Pesan */}
         <View className="p-3">
-          {/* Container input menggunakan warna abu-abu solid (bg-gray-100) */}
           <View
             className="flex-row items-end rounded-3xl px-2 py-1"
             style={{
@@ -95,28 +163,31 @@ export default function Chat() {
               value={inputText}
               onChangeText={setInputText}
               onContentSizeChange={(event) => {
-                const nextHeight = event.nativeEvent.contentSize.height;
-                setInputHeight(nextHeight);
+                setInputHeight(event.nativeEvent.contentSize.height);
               }}
               multiline
+              editable={!isLoading} // Kunci input saat loading
             />
 
-            {/* Tombol Kirim di dalam container input */}
             <TouchableOpacity
               onPress={handleSend}
+              disabled={isLoading || !inputText.trim()}
               className="items-center justify-center rounded-full p-2">
-              {/* Icon kirim diubah menjadi warna biru agar kontras dengan abu-abu */}
               <View
                 className="items-center justify-center rounded-full"
-                style={{ width: 40, height: 40, backgroundColor: chatTheme.sendIcon }}>
+                style={{
+                  width: 40,
+                  height: 40,
+                  backgroundColor:
+                    !inputText.trim() || isLoading ? chatTheme.botBubble : chatTheme.sendIcon, // Ubah warna ikon kalau disable
+                  opacity: !inputText.trim() || isLoading ? 0.5 : 1,
+                }}>
                 <Ionicons name="send" size={20} color="#ffffff" />
               </View>
             </TouchableOpacity>
           </View>
 
-          <Text
-            className="mt-2 text-xs text-center"
-            style={{ color: chatTheme.placeholder }}>
+          <Text className="mt-2 text-center text-xs" style={{ color: chatTheme.placeholder }}>
             WAMchat might be wrong. Double-check the important information.
           </Text>
         </View>

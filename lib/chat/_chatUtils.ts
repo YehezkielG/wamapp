@@ -70,3 +70,31 @@ export function getChatThemeFromBackgroundColors(colors: ColorValue[]): ChatThem
     botText: dark ? '#ffffff' : '#111827',
   };
 }
+
+// ... (kode sebelumnya di _chatUtils.ts tetap dipertahankan) ...
+
+export async function sendMessageToRAGBackend(message: string): Promise<string> {
+  // Ganti URL ini dengan URL Railway kamu setelah di-deploy
+  // Untuk tes lokal di emulator Android gunakan: 'http://10.0.2.2:8000/api/chat'
+  // Untuk tes lokal di iOS/Web gunakan: 'http://127.0.0.1:8000/api/chat'
+  // const API_URL = 'https://NAMA-PROJECT-RAILWAY-KAMU.up.railway.app/api/chat';
+  const API_URL = 'http://10.119.206.141:8000/api/chat'
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: message }), 
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.reply; 
+
+  } catch (error) {
+    console.error("Error dari backend RAG:", error);
+    return "Maaf, koneksi WAMchat ke server terputus. Coba periksa jaringanmu.";
+  }
+}
