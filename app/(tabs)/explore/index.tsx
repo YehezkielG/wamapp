@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   KeyboardAvoidingView,
   Modal,
@@ -33,6 +34,7 @@ import {
   type MarkedLocationWeather,
 } from '../../../lib/explore/markedLocationWeather';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
+import { showPopup } from '../../../lib/inAppPopup';
 
 type Region = {
   latitude: number;
@@ -87,7 +89,6 @@ export default function Explore() {
   const [markedLocations, setMarkedLocations] = useState<MarkedLocation[]>([]);
   const [markedLocationWeather, setMarkedLocationWeather] = useState<Record<string, MarkedLocationWeather>>({});
   const [selectedMarkedLocationId, setSelectedMarkedLocationId] = useState<string | null>(null);
-  const [openedLocationMenuId, setOpenedLocationMenuId] = useState<string | null>(null);
   const [pendingCoordinate, setPendingCoordinate] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pendingTargetLocationId, setPendingTargetLocationId] = useState<string | null>(null);
   const [pendingLocationName, setPendingLocationName] = useState('');
@@ -124,6 +125,8 @@ export default function Explore() {
     ? 'flex-1 rounded-lg border border-white/30 bg-white/15 px-3 py-2 text-sm text-white'
     : 'flex-1 rounded-lg border border-slate-300 bg-white/75 px-3 py-2 text-sm text-slate-900';
   const panelInputPlaceholderColor = isDarkUi ? 'rgba(241,245,249,0.75)' : 'rgba(71,85,105,0.75)';
+  const modalInputBg = isDarkUi ? 'rgba(255,255,255,0.06)' : '#ffffff';
+  const modalPlaceholderColor = isDarkUi ? 'rgba(241,245,249,0.65)' : 'rgba(71,85,105,0.65)';
 
   const coverageAreaKm2 = useMemo(() => {
     const earthRadiusKm = 6371;
@@ -387,7 +390,6 @@ export default function Explore() {
 
   const handleSelectLocation = (location: MarkedLocation) => {
     setSelectedMarkedLocationId(location.id);
-    setOpenedLocationMenuId(null);
     focusMapToLocation(location.latitude, location.longitude);
     void refreshWeatherForLocation(location);
   };
@@ -449,6 +451,11 @@ export default function Explore() {
         setMarkedLocationWeather((previous) => ({ ...previous, [saved.id]: weather }));
         setSelectedMarkedLocationId(saved.id);
         focusMapToLocation(saved.latitude, saved.longitude);
+        showPopup({
+          type: 'success',
+          title: 'Location Added',
+          message: `${saved.locationName} has been marked successfully.`,
+        });
       }
 
       setIsCreateLocationModalVisible(false);
@@ -481,12 +488,33 @@ export default function Explore() {
         return next;
       });
       setSelectedMarkedLocationId((previous) => (previous === locationId ? null : previous));
-      setOpenedLocationMenuId((previous) => (previous === locationId ? null : previous));
+      showPopup({
+        type: 'success',
+        title: 'Location Deleted',
+        message: 'Marked location has been deleted successfully.',
+      });
     } catch (error) {
       setMarkedErrorMessage(
         error instanceof Error ? error.message : 'Failed to delete marked location.'
       );
     }
+  };
+
+  const confirmDeleteMarkedLocation = (location: MarkedLocation) => {
+    Alert.alert(
+      'Delete marked location?',
+      `Are you sure you want to delete "${location.locationName}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void handleDeleteMarkedLocation(location.id);
+          },
+        },
+      ]
+    );
   };
 
   const mapHeight = useMemo(() => Math.round(Dimensions.get('window').height * 0.56), []);
@@ -735,14 +763,17 @@ export default function Explore() {
                 }`}
               >
                 <View className="flex-row items-start justify-between gap-2">
-                  <Text className={`flex-1 text-[11px] ${outsideMapTextClass}`} numberOfLines={2}>
+                  <Text className={`flex-1 text-sm ${outsideMapTextClass}`} numberOfLines={2}>
                     {location.locationName}
                   </Text>
                   <Pressable
-                    onPress={() => setOpenedLocationMenuId((previous) => (previous === location.id ? null : location.id))}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      confirmDeleteMarkedLocation(location);
+                    }}
                     className="flex-row items-center gap-1 rounded-md px-2 py-1"
                   >
-                    <Ionicons name="ellipsis-vertical" size={12} color={isDarkUi ? '#e2e8f0' : '#475569'} />
+                    <Ionicons name="trash-outline" size={14} color={isDarkUi ? '#fda4af' : '#be123c'} />
                   </Pressable>
                 </View>
                 <Text className={`mt-1 text-[10px] ${outsideMapMutedTextClass}`}>
@@ -762,26 +793,6 @@ export default function Explore() {
                   Current Temp: {markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C · Current Wind: {markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
                 </Text>
 
-                {openedLocationMenuId === location.id ? (
-                  <View
-                    className={`mt-2 rounded-lg p-2 ${isDarkUi ? 'border border-white/25 bg-white/12' : 'border border-slate-300 bg-white'}`}
-                  >
-                    <Pressable
-                      onPress={() => handleSelectLocation(location)}
-                      className="flex-row items-center gap-2 rounded-md px-2 py-1"
-                    >
-                      <Ionicons name="locate" size={13} color="#0369a1" />
-                      <Text className="text-[11px] font-medium text-sky-700">Focus</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => handleDeleteMarkedLocation(location.id)}
-                      className="mt-1 flex-row items-center gap-2 rounded-md px-2 py-1"
-                    >
-                      <Ionicons name="trash-outline" size={13} color="#be123c" />
-                      <Text className="text-[11px] font-medium text-rose-700">Delete</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
               </Pressable>
             ))}
           </View>
@@ -796,27 +807,44 @@ export default function Explore() {
       >
         <View className="flex-1 items-center justify-center bg-black/40 px-5">
           <View
-            className={`w-full rounded-2xl p-4 ${isDarkUi ? 'border border-white/30 bg-slate-900/85' : 'border border-white/70 bg-white/95'}`}
+            className={`w-full rounded-2xl overflow-hidden ${isDarkUi ? 'border border-white/30 bg-slate-900/85' : 'border border-white/70 bg-white/95'}`}
           >
-            <Text className={`text-base font-semibold ${outsideMapTextClass}`}>
-              {pendingTargetLocationId ? 'Update marked location' : 'Mark location'}
-            </Text>
-            <Text className={`mt-1 text-xs ${outsideMapMutedTextClass}`}>
-              Enter an optional location name before saving.
-            </Text>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 12 }}
+              style={{ maxHeight: 320 }}
+              className="p-4"
+            >
+              <Text className={`text-base font-semibold ${outsideMapTextClass}`}>
+                {pendingTargetLocationId ? 'Update marked location' : 'Mark location'}
+              </Text>
+              <Text className={`mt-1 text-xs ${outsideMapMutedTextClass}`}>
+                Enter an optional location name before saving.
+              </Text>
 
-            <TextInput
-              value={pendingLocationName}
-              onChangeText={setPendingLocationName}
-              placeholder="Enter location_name"
-              placeholderTextColor={panelInputPlaceholderColor}
-              className={`mt-3 ${panelInputClass}`}
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={handleSaveLocationFromMapPress}
-            />
+              <TextInput
+                value={pendingLocationName}
+                onChangeText={setPendingLocationName}
+                placeholder="Enter location_name"
+                placeholderTextColor={modalPlaceholderColor}
+                className={`mt-3 ${panelInputClass}`}
+                style={{
+                  color: isDarkUi ? '#ffffff' : '#0f172a',
+                  fontSize: 16,
+                  backgroundColor: modalInputBg,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 10,
+                  minHeight: 48,
+                  marginBottom: 8,
+                }}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleSaveLocationFromMapPress}
+              />
+            </ScrollView>
 
-            <View className="mt-4 flex-row items-center justify-end gap-2">
+            <View className={`border-t px-4 py-3 flex-row justify-end gap-2 ${isDarkUi ? 'border-white/10' : 'border-slate-200'}`}>
               <Pressable
                 onPress={() => {
                   setIsCreateLocationModalVisible(false);

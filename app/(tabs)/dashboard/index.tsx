@@ -152,7 +152,7 @@ export default function Dashboard() {
     if (hour >= 12 && hour < 17)
       return { label: 'Afternoon', iconName: 'partly-sunny' as const, color: '#fb923c' };
     if (hour >= 17 && hour < 20)
-      return { label: 'Evening', iconName: 'moon' as const, color: '#7c3aed' };
+      return { label: 'Evening', iconName: 'partly-sunny' as const, color: '#7c3aed' };
     return { label: 'Night', iconName: 'moon' as const, color: '#2563eb' };
   }, [now]);
 

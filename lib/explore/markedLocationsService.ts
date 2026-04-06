@@ -80,6 +80,82 @@ export async function getCurrentDeviceId() {
   return data.id;
 }
 
+function haversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = 6371000; // meters
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+async function resolvePushTokenInternal() {
+  if (!Device.isDevice) return null;
+
+  try {
+    const permission = await Notifications.getPermissionsAsync();
+    if (permission.status !== 'granted') return null;
+    const tokenResponse = await Notifications.getExpoPushTokenAsync();
+    return tokenResponse.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateDeviceLocationIfMoved(pushToken: string | null, latitude: number, longitude: number, minMeters = 500) {
+  if (!pushToken) return false;
+
+  const { data: deviceRows, error: fetchErr } = await supabase
+    .from('devices')
+    .select('id, latitude, longitude')
+    .eq('push_token', pushToken)
+    .limit(1)
+    .single();
+
+  if (fetchErr && fetchErr.code !== 'PGRST116') {
+    // ignore not-found vs other errors
+  }
+
+  const prevLat = deviceRows?.latitude ?? null;
+  const prevLon = deviceRows?.longitude ?? null;
+
+  let shouldUpdate = false;
+  if (prevLat === null || prevLon === null) {
+    shouldUpdate = true;
+  } else {
+    const dist = haversineDistanceMeters(Number(prevLat), Number(prevLon), latitude, longitude);
+    shouldUpdate = dist >= minMeters;
+  }
+
+  if (!shouldUpdate) return false;
+
+  const { error: upsertErr } = await supabase
+    .from('devices')
+    .upsert({ push_token: pushToken, latitude, longitude, last_active: new Date().toISOString() }, { onConflict: 'push_token' });
+
+  if (upsertErr) {
+    // log but don't throw from background
+    console.warn('Failed to update device location:', upsertErr.message);
+    return false;
+  }
+
+  return true;
+}
+
+export async function updateDeviceLocationFromCoords(latitude: number, longitude: number, minMeters = 500) {
+  try {
+    const pushToken = await resolvePushTokenInternal();
+    if (!pushToken) return false;
+    return await updateDeviceLocationIfMoved(pushToken, latitude, longitude, minMeters);
+  } catch (err) {
+    console.warn('updateDeviceLocationFromCoords error', err);
+    return false;
+  }
+}
+
 export async function listMarkedLocations(deviceId: string | null) {
   let query = supabase
     .from('marked_locations')
