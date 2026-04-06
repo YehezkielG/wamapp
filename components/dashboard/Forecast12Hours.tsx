@@ -1,6 +1,7 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { ScrollView, Text, View } from 'react-native';
+import { weatherCodeToIcon } from './weatherCodeVisual';
 
 export type ForecastHourItem = {
   time: string;
@@ -16,19 +17,6 @@ type Props = {
 
 function celsiusToFahrenheit(valueInCelsius: number) {
   return (valueInCelsius * 9) / 5 + 32;
-}
-
-function weatherCodeToIcon(code?: number): keyof typeof Ionicons.glyphMap {
-  if (code === 0) return 'sunny';
-  if (code === 1 || code === 2) return 'partly-sunny';
-  if (code === 3) return 'cloudy';
-  if (code === 45 || code === 48) return 'cloudy-outline';
-  if (code === 51 || code === 53 || code === 55) return 'rainy-outline';
-  if (code === 61 || code === 63 || code === 65) return 'rainy';
-  if (code === 71 || code === 73 || code === 75) return 'snow';
-  if (code === 80 || code === 81 || code === 82) return 'rainy';
-  if (code === 95 || code === 96 || code === 99) return 'thunderstorm';
-  return 'help-circle-outline';
 }
 
 export default function Forecast12Hours({ items, unit, isDarkUi }: Props) {
@@ -47,8 +35,7 @@ export default function Forecast12Hours({ items, unit, isDarkUi }: Props) {
         horizontal
         showsHorizontalScrollIndicator={false}
         className="mt-3"
-        contentContainerClassName="gap-3 pr-2"
-      >
+        contentContainerClassName="gap-3 pr-2">
         {items.map((item) => {
           const temperature =
             unit === 'C'
@@ -61,9 +48,16 @@ export default function Forecast12Hours({ items, unit, isDarkUi }: Props) {
           });
 
           return (
-            <View key={`${item.time}-${item.weatherCode ?? 'u'}`} className={`w-24 rounded-2xl p-3 ${cardClass}`}>
+            <View
+              key={`${item.time}-${item.weatherCode ?? 'u'}`}
+              className={`w-24 rounded-2xl p-3 ${cardClass}`}>
               <Text className={`text-xs font-medium ${secondaryTextClass}`}>{hourLabel}</Text>
-              <Ionicons name={weatherCodeToIcon(item.weatherCode)} size={20} color="#f59e0b" style={{ marginTop: 8 }} />
+              <Ionicons
+                name={weatherCodeToIcon(item.weatherCode)}
+                size={20}
+                color="#f59e0b"
+                style={{ marginTop: 8 }}
+              />
               <Text className={`mt-2 text-base font-bold ${primaryTextClass}`}>{temperature}</Text>
             </View>
           );
