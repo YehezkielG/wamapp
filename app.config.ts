@@ -46,6 +46,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           '',
       },
     },
+    "googleServicesFile": "./google-services.json"
   },
   extra: {
     eas: {
