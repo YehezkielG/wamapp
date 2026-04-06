@@ -8,6 +8,7 @@ type ForecastUiStore = {
   visibleHourCountByDate: Record<string, number>;
   resetVisibleDayCount: () => void;
   loadMoreDays: (total: number) => void;
+  setSelectedDate: (date: string | null) => void;
   toggleSelectedDate: (date: string) => void;
   loadMoreHours: (date: string, total: number) => void;
 };
@@ -23,6 +24,18 @@ export const useForecastUiStore = create<ForecastUiStore>((set, get) => ({
     set((state) => ({
       visibleDayCount: Math.min(state.visibleDayCount + PAGE_SIZE, total),
     })),
+
+  setSelectedDate: (date) =>
+    set((state) => {
+      if (!date) return { selectedDate: null };
+      return {
+        selectedDate: date,
+        visibleHourCountByDate: {
+          ...state.visibleHourCountByDate,
+          [date]: state.visibleHourCountByDate[date] ?? PAGE_SIZE,
+        },
+      };
+    }),
 
   toggleSelectedDate: (date) => {
     const state = get();

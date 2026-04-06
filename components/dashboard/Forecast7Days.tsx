@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { Fragment, useEffect, useMemo, useRef } from 'react';
 import { BlurView } from 'expo-blur';
-import { FlatList, Text, View, Pressable } from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useShallow } from 'zustand/react/shallow';
 import { useForecastUiStore } from '../../lib/weather/forecastUiStore';
@@ -46,17 +46,26 @@ function initialHourIndexForSelectedDay(dateKey: string, items: ForecastHourItem
   if (!items.length) return 0;
 
   const now = new Date();
-  const nowMs = now.getTime();
-  const nowHour = now.getHours();
   const todayKey = localDateKey(now);
 
-  if (dateKey === todayKey) {
-    const exactIndex = items.findIndex((item) => new Date(item.time).getTime() >= nowMs);
-    return exactIndex < 0 ? 0 : exactIndex;
+  if (dateKey !== todayKey) return 0;
+
+  const nowHour = now.getHours();
+  const targetTime = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+
+  const currentHourIndex = items.findIndex((item) => new Date(item.time).getHours() >= nowHour);
+  const targetHourIndex = items.findIndex(
+    (item) => new Date(item.time).getTime() >= targetTime.getTime()
+  );
+
+  if (currentHourIndex >= 0 && targetHourIndex >= 0) {
+    // Keep current hour visible while still biasing the list toward now + 3 hours.
+    return Math.max(0, Math.min(currentHourIndex, targetHourIndex - 1));
   }
 
-  const hourIndex = items.findIndex((item) => new Date(item.time).getHours() >= nowHour);
-  return hourIndex < 0 ? 0 : hourIndex;
+  if (currentHourIndex >= 0) return Math.max(0, currentHourIndex);
+  if (targetHourIndex >= 0) return Math.max(0, targetHourIndex - 1);
+  return 0;
 }
 
 function dayLabel(index: number) {
@@ -77,11 +86,10 @@ export default function Forecast7Days({
   isDarkUi,
   isLoading = false,
 }: Props) {
-  const { visibleDayCount, selectedDate, loadMoreDays, toggleSelectedDate } = useForecastUiStore(
+  const { selectedDate, setSelectedDate, toggleSelectedDate } = useForecastUiStore(
     useShallow((state) => ({
-      visibleDayCount: state.visibleDayCount,
       selectedDate: state.selectedDate,
-      loadMoreDays: state.loadMoreDays,
+      setSelectedDate: state.setSelectedDate,
       toggleSelectedDate: state.toggleSelectedDate,
     }))
   );
@@ -96,11 +104,6 @@ export default function Forecast7Days({
 
   const hasItems = items.length > 0;
 
-  const visibleDays = useMemo(
-    () => (hasItems ? items.slice(0, Math.min(visibleDayCount, items.length)) : []),
-    [hasItems, items, visibleDayCount]
-  );
-
   const allSelectedHours = useMemo(() => {
     if (!selectedDate) return [];
     const source = hoursByDate[selectedDate] ?? [];
@@ -112,127 +115,174 @@ export default function Forecast7Days({
     return initialHourIndexForSelectedDay(selectedDate, allSelectedHours);
   }, [allSelectedHours, selectedDate]);
 
+  const hourlyListRef = useRef<FlatList<ForecastHourItem>>(null);
+  const hasInitializedDefaultSelectionRef = useRef(false);
+
+  useEffect(() => {
+    if (hasInitializedDefaultSelectionRef.current) return;
+    if (!items.length) return;
+
+    const todayDate = localDateKey(new Date());
+    const defaultDate = items.find((item) => item.date === todayDate)?.date ?? items[0]?.date;
+
+    if (defaultDate) {
+      setSelectedDate(defaultDate);
+    }
+
+    hasInitializedDefaultSelectionRef.current = true;
+  }, [items, selectedDate, setSelectedDate]);
+
+  useEffect(() => {
+    if (!selectedDate || !allSelectedHours.length) return;
+
+    const timer = setTimeout(() => {
+      hourlyListRef.current?.scrollToIndex({
+        index: initialHourIndex,
+        animated: false,
+        viewPosition: 0,
+      });
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [selectedDate, allSelectedHours.length, initialHourIndex]);
+
   return (
     <View className="mt-8 w-full">
       <Text className={`text-2xl font-bold ${titleClass}`}>Next 7 Days</Text>
 
-      <FlatList
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        className="mt-3"
-        contentContainerStyle={{ paddingRight: 8, columnGap: 12 }}
-        data={hasItems ? visibleDays : []}
-        keyExtractor={(item) => `${item.date}-${item.weatherCode ?? 'u'}`}
-        onEndReachedThreshold={0.65}
-        onEndReached={() => {
-          if (hasItems && visibleDayCount < items.length) {
-            loadMoreDays(items.length);
-          }
-        }}
-        ListEmptyComponent={
-          isLoading ? (
-            <View className="flex-row gap-3">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <View key={`skeleton-7d-${index}`} className={`w-32 rounded-2xl p-3 ${cardClass}`}>
-                  <View className={`h-3 w-16 rounded ${skeletonBarClass}`} />
-                  <View className={`mt-3 h-5 w-5 rounded-full ${skeletonBarClass}`} />
-                  <View className={`mt-3 h-4 w-20 rounded ${skeletonBarClass}`} />
-                  <View className={`mt-2 h-3 w-14 rounded ${skeletonBarClass}`} />
+      <View className="mt-3 gap-3">
+        {hasItems
+          ? items.map((item, index) => {
+              const maxTemperature =
+                unit === 'C'
+                  ? `${item.temperatureMaxC.toFixed(1)}°C`
+                  : `${celsiusToFahrenheit(item.temperatureMaxC).toFixed(1)}°F`;
+
+              const minTemperature =
+                unit === 'C'
+                  ? `${item.temperatureMinC.toFixed(1)}°C`
+                  : `${celsiusToFahrenheit(item.temperatureMinC).toFixed(1)}°F`;
+
+              const isOpen = selectedDate === item.date;
+              const detailHours = isOpen ? allSelectedHours : [];
+
+              return (
+                <Fragment key={`${item.date}-${item.weatherCode ?? 'u'}`}>
+                  <Pressable
+                    onPress={() => toggleSelectedDate(item.date)}
+                    className={`h-32 w-full rounded-2xl px-3 py-3 ${cardClass}`}>
+                    <Text className={`text-xs ${secondaryTextClass}`}>{dayLabel(index)}</Text>
+
+                    <View className="mt-3 flex-row items-center gap-3">
+                      <View className="flex-1">
+                        <View className="flex-row items-center gap-1.5">
+                          <Text className={`text-xs ${secondaryTextClass}`}>Min</Text>
+                          <Text className={`text-xs ${primaryTextClass}`}>{minTemperature}</Text>
+                        </View>
+
+                        <View className="mt-1.5 flex-row items-center gap-1.5">
+                          <Text className={`text-xs ${secondaryTextClass}`}>Max</Text>
+                          <Text className={`text-xs ${primaryTextClass}`}>{maxTemperature}</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View className="absolute" style={{ right: 12, top: '50%', marginTop: -13 }}>
+                      <Ionicons
+                        name={weatherCodeToIcon(item.weatherCode)}
+                        size={26}
+                        color="#f59e0b"
+                      />
+                    </View>
+                  </Pressable>
+
+                  {isOpen ? (
+                    <BlurView
+                      intensity={35}
+                      tint={isDarkUi ? 'dark' : 'light'}
+                      className="overflow-hidden rounded-2xl border border-white/35">
+                      <View className="px-3 py-3">
+                        <Text className={`text-sm font-semibold ${titleClass}`}>
+                          Hourly for {item.date}
+                        </Text>
+
+                        <FlatList
+                          ref={hourlyListRef}
+                          key={item.date}
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          className="mt-3"
+                          contentContainerStyle={{ paddingRight: 8, columnGap: 12 }}
+                          data={detailHours}
+                          keyExtractor={(hourItem) =>
+                            `${hourItem.time}-${hourItem.weatherCode ?? 'u'}`
+                          }
+                          getItemLayout={(_, listIndex) => ({
+                            length: 108,
+                            offset: 108 * listIndex,
+                            index: listIndex,
+                          })}
+                          onScrollToIndexFailed={() => {
+                            hourlyListRef.current?.scrollToOffset({
+                              offset: Math.max(0, initialHourIndex) * 108,
+                              animated: false,
+                            });
+                          }}
+                          ListEmptyComponent={
+                            <Text className={`text-xs ${secondaryTextClass}`}>
+                              Hourly data is unavailable.
+                            </Text>
+                          }
+                          renderItem={({ item: hourItem }) => {
+                            const hourTemperature =
+                              unit === 'C'
+                                ? `${hourItem.temperatureC.toFixed(1)}°C`
+                                : `${celsiusToFahrenheit(hourItem.temperatureC).toFixed(1)}°F`;
+
+                            const hourLabel = new Date(hourItem.time).toLocaleTimeString('en-GB', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            });
+
+                            return (
+                              <View className={`w-24 rounded-2xl p-3 ${cardClass}`}>
+                                <Text className={`text-xs font-medium ${secondaryTextClass}`}>
+                                  {hourLabel}
+                                </Text>
+                                <Ionicons
+                                  name={weatherCodeToIcon(hourItem.weatherCode)}
+                                  size={20}
+                                  color="#f59e0b"
+                                  style={{ marginTop: 8 }}
+                                />
+                                <Text className={`mt-2 text-base font-bold ${primaryTextClass}`}>
+                                  {hourTemperature}
+                                </Text>
+                              </View>
+                            );
+                          }}
+                        />
+                      </View>
+                    </BlurView>
+                  ) : null}
+                </Fragment>
+              );
+            })
+          : isLoading
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <View
+                  key={`skeleton-7d-${index}`}
+                  className={`h-32 w-full rounded-2xl p-3 ${cardClass}`}>
+                  <View className={`h-3 w-24 rounded ${skeletonBarClass}`} />
+                  <View className={`mt-3 h-4 w-40 rounded ${skeletonBarClass}`} />
+                  <View className={`mt-2 h-4 w-36 rounded ${skeletonBarClass}`} />
+                  <View
+                    className={`mt-auto h-4 w-4 self-center rounded-full ${skeletonBarClass}`}
+                  />
                 </View>
-              ))}
-            </View>
-          ) : null
-        }
-        renderItem={({ item, index }) => {
-          const maxTemperature =
-            unit === 'C'
-              ? `${item.temperatureMaxC.toFixed(1)}°C`
-              : `${celsiusToFahrenheit(item.temperatureMaxC).toFixed(1)}°F`;
-
-          const minTemperature =
-            unit === 'C'
-              ? `${item.temperatureMinC.toFixed(1)}°C`
-              : `${celsiusToFahrenheit(item.temperatureMinC).toFixed(1)}°F`;
-
-          return (
-            <Pressable
-              onPress={() => toggleSelectedDate(item.date)}
-              className={`w-32 rounded-2xl p-3 ${cardClass}`}>
-              <Text className={`text-xs font-medium ${secondaryTextClass}`}>{dayLabel(index)}</Text>
-              <Ionicons
-                name={weatherCodeToIcon(item.weatherCode)}
-                size={20}
-                color="#f59e0b"
-                style={{ marginTop: 8 }}
-              />
-              <Text className={`mt-2 text-xs font-medium ${secondaryTextClass}`}>Max</Text>
-              <Text className={`text-base font-bold ${primaryTextClass}`}>{maxTemperature}</Text>
-              <Text className={`mt-0.5 text-xs ${secondaryTextClass}`}>Min</Text>
-              <Text className={`text-sm font-semibold ${primaryTextClass}`}>{minTemperature}</Text>
-
-              <View className="mt-2.5 items-center">
-                <Ionicons
-                  name={selectedDate === item.date ? 'chevron-up-circle' : 'chevron-down-circle'}
-                  size={16}
-                  color={selectedDate === item.date ? '#f59e0b' : '#94a3b8'}
-                />
-              </View>
-            </Pressable>
-          );
-        }}
-      />
-
-      {selectedDate ? (
-        <BlurView
-          intensity={35}
-          tint={isDarkUi ? 'dark' : 'light'}
-          className="mt-4 overflow-hidden rounded-2xl border border-white/35">
-          <View className="px-3 py-3">
-            <Text className={`text-sm font-semibold ${titleClass}`}>Hourly for {selectedDate}</Text>
-
-            <FlatList
-              key={selectedDate}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              className="mt-3"
-              contentContainerStyle={{ paddingRight: 8, columnGap: 12 }}
-              data={allSelectedHours}
-              keyExtractor={(item) => `${item.time}-${item.weatherCode ?? 'u'}`}
-              initialScrollIndex={Math.max(0, initialHourIndex)}
-              getItemLayout={(_, index) => ({ length: 108, offset: 108 * index, index })}
-              ListEmptyComponent={
-                <Text className={`text-xs ${secondaryTextClass}`}>Hourly data is unavailable.</Text>
-              }
-              renderItem={({ item }) => {
-                const hourTemperature =
-                  unit === 'C'
-                    ? `${item.temperatureC.toFixed(1)}°C`
-                    : `${celsiusToFahrenheit(item.temperatureC).toFixed(1)}°F`;
-
-                const hourLabel = new Date(item.time).toLocaleTimeString('en-GB', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                });
-
-                return (
-                  <View className={`w-24 rounded-2xl p-3 ${cardClass}`}>
-                    <Text className={`text-xs font-medium ${secondaryTextClass}`}>{hourLabel}</Text>
-                    <Ionicons
-                      name={weatherCodeToIcon(item.weatherCode)}
-                      size={20}
-                      color="#f59e0b"
-                      style={{ marginTop: 8 }}
-                    />
-                    <Text className={`mt-2 text-base font-bold ${primaryTextClass}`}>
-                      {hourTemperature}
-                    </Text>
-                  </View>
-                );
-              }}
-            />
-          </View>
-        </BlurView>
-      ) : null}
+              ))
+            : null}
+      </View>
     </View>
   );
 }
