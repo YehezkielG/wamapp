@@ -18,7 +18,7 @@ import {
   type Message,
 } from '../../../lib/chat/_chatUtils';
 
-const BOTTOM_TAB_BAR_HEIGHT = 78;
+const INPUT_BOTTOM_GAP = 8;
 
 export default function Chat() {
   const { colors } = useWeatherBackground();
@@ -57,9 +57,7 @@ export default function Chat() {
   };
 
   return (
-    <SafeAreaView
-      className="flex-1 bg-transparent"
-      style={{ paddingBottom: BOTTOM_TAB_BAR_HEIGHT }}>
+    <SafeAreaView className="flex-1 bg-transparent" style={{ paddingBottom: INPUT_BOTTOM_GAP }}>
       {/* Header WAMchat */}
       <View className="px-4 py-4">
         <Text className="text-xl font-bold" style={{ color: chatTheme.titleColor }}>
@@ -69,7 +67,7 @@ export default function Chat() {
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={BOTTOM_TAB_BAR_HEIGHT}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : INPUT_BOTTOM_GAP}
         className="flex-1">
         {/* Area Daftar Pesan */}
         <FlatList
