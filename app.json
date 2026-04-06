@@ -31,7 +31,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.zekiell12.WAMApp"
+      "package": "com.zekiell12.WAMApp",
+      "googleServicesFile": "./google-services.json"
     },
     "extra": {
       "eas": {

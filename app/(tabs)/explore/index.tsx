@@ -1,14 +1,37 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Dimensions, Pressable, Text, View } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, UrlTile } from 'react-native-maps';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import MapView, { Marker, PROVIDER_GOOGLE, UrlTile, type MapPressEvent } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import { EXPLORE_LAYERS, type ExploreLayerId } from '../../../lib/explore/mapLayers';
 import {
-  fetchOpenWeatherLayerSamples,
-  type ExploreLayerRanges,
-  type ExploreSamplePoint,
-} from '../../../lib/explore/openWeatherExplore';
+  addMarkedLocation,
+  deleteMarkedLocation,
+  getCurrentDeviceId,
+  listMarkedLocations,
+  type MarkedLocation,
+  updateMarkedLocationName,
+} from '../../../lib/explore/markedLocationsService';
+import {
+  searchLocationsWithNominatim,
+  type NominatimSearchResult,
+} from '../../../lib/explore/nominatimSearch';
+import {
+  fetchMarkedLocationWeather,
+  type MarkedLocationWeather,
+} from '../../../lib/explore/markedLocationWeather';
 
 type Region = {
   latitude: number;
@@ -29,7 +52,9 @@ const WIND_TILE_COLORS = ['#083344', '#0f766e', '#14b8a6', '#5eead4', '#a7f3d0']
 const PRECIP_TILE_COLORS = ['#172554', '#1d4ed8', '#3b82f6', '#7dd3fc', '#e0f2fe'];
 const CLOUD_TILE_COLORS = ['#334155', '#64748b', '#94a3b8', '#cbd5e1', '#f8fafc'];
 
-const DEFAULT_RANGES: ExploreLayerRanges = {
+type LayerRanges = Record<ExploreLayerId, { min: number; max: number }>;
+
+const DEFAULT_RANGES: LayerRanges = {
   precipitation: { min: 0, max: 10 },
   wind: { min: 0, max: 80 },
   clouds: { min: 0, max: 100 },
@@ -44,19 +69,30 @@ const TILE_LAYER_BY_ID: Record<ExploreLayerId, string> = {
 };
 
 export default function Explore() {
+  const mapRef = useRef<MapView | null>(null);
+
   const [mapRegion, setMapRegion] = useState<Region>(DEFAULT_REGION);
-  const [queryRegion, setQueryRegion] = useState<Region>(DEFAULT_REGION);
   const [isLocationLoading, setIsLocationLoading] = useState(true);
-  const [isAttributeLoading, setIsAttributeLoading] = useState(true);
+  const [isMarkedLoading, setIsMarkedLoading] = useState(true);
+  const [isSearchingLocation, setIsSearchingLocation] = useState(false);
   const [locationErrorMessage, setLocationErrorMessage] = useState<string | null>(null);
   const [tileErrorMessage, setTileErrorMessage] = useState<string | null>(null);
-  const [attributeErrorMessage, setAttributeErrorMessage] = useState<string | null>(null);
+  const [markedErrorMessage, setMarkedErrorMessage] = useState<string | null>(null);
   const [activeLayer, setActiveLayer] = useState<ExploreLayerId>('temperature');
   const [isLayerPickerOpen, setIsLayerPickerOpen] = useState(false);
-  const [layerRanges, setLayerRanges] = useState<ExploreLayerRanges>(DEFAULT_RANGES);
-  const [focusPoint, setFocusPoint] = useState<ExploreSamplePoint | null>(null);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [activeTileUrlTemplate, setActiveTileUrlTemplate] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<NominatimSearchResult[]>([]);
+  const [markedLocations, setMarkedLocations] = useState<MarkedLocation[]>([]);
+  const [markedLocationWeather, setMarkedLocationWeather] = useState<Record<string, MarkedLocationWeather>>({});
+  const [selectedMarkedLocationId, setSelectedMarkedLocationId] = useState<string | null>(null);
+  const [openedLocationMenuId, setOpenedLocationMenuId] = useState<string | null>(null);
+  const [pendingCoordinate, setPendingCoordinate] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [pendingTargetLocationId, setPendingTargetLocationId] = useState<string | null>(null);
+  const [pendingLocationName, setPendingLocationName] = useState('');
+  const [isCreateLocationModalVisible, setIsCreateLocationModalVisible] = useState(false);
+  const [isSavingLocationFromMap, setIsSavingLocationFromMap] = useState(false);
+  const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
 
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -68,6 +104,22 @@ export default function Explore() {
   );
 
   const selectedTileLayer = TILE_LAYER_BY_ID[activeLayer];
+  const outsideMapSurfaceClass = 'border border-white/70 bg-white/60';
+  const outsideMapTextClass = 'text-slate-800';
+  const outsideMapMutedTextClass = 'text-slate-600';
+
+  const coverageAreaKm2 = useMemo(() => {
+    const earthRadiusKm = 6371;
+    const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+
+    const latDeltaRadians = toRadians(Math.abs(mapRegion.latitudeDelta));
+    const lonDeltaRadians = toRadians(Math.abs(mapRegion.longitudeDelta));
+    const latitudeRadians = toRadians(mapRegion.latitude);
+
+    const northSouthKm = earthRadiusKm * latDeltaRadians;
+    const eastWestKm = earthRadiusKm * lonDeltaRadians * Math.cos(latitudeRadians);
+    return Math.max(0, northSouthKm * Math.max(0, eastWestKm));
+  }, [mapRegion.latitude, mapRegion.latitudeDelta, mapRegion.longitudeDelta]);
 
   const tileUrlTemplate = useMemo(() => {
     if (!supabaseUrl) return null;
@@ -117,7 +169,6 @@ export default function Explore() {
         };
 
         setMapRegion(nextRegion);
-        setQueryRegion(nextRegion);
       } catch (error) {
         setLocationErrorMessage(
           error instanceof Error
@@ -133,12 +184,28 @@ export default function Explore() {
   }, []);
 
   useEffect(() => {
-    const debounceTimer = setTimeout(() => {
-      setQueryRegion(mapRegion);
-    }, 700);
+    const loadMarkedLocations = async () => {
+      setIsMarkedLoading(true);
+      setMarkedErrorMessage(null);
 
-    return () => clearTimeout(debounceTimer);
-  }, [mapRegion]);
+      try {
+        const deviceId = await getCurrentDeviceId();
+        setCurrentDeviceId(deviceId);
+
+        const locations = await listMarkedLocations(deviceId);
+        setMarkedLocations(locations);
+        await hydrateWeatherForLocations(locations);
+      } catch (error) {
+        setMarkedErrorMessage(
+          error instanceof Error ? error.message : 'Failed to load marked locations.'
+        );
+      } finally {
+        setIsMarkedLoading(false);
+      }
+    };
+
+    loadMarkedLocations();
+  }, []);
 
   useEffect(() => {
     if (!tileUrlTemplate) return;
@@ -190,53 +257,6 @@ export default function Explore() {
     return () => controller.abort();
   }, [directTileUrlTemplate, tileUrlTemplate]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-
-    const loadAttributes = async () => {
-      setIsAttributeLoading(true);
-      setAttributeErrorMessage(null);
-
-      try {
-        const areaLevel =
-          queryRegion.latitudeDelta >= 6
-            ? 'province'
-            : queryRegion.latitudeDelta >= 2.4
-              ? 'city'
-              : 'district';
-
-        const result = await fetchOpenWeatherLayerSamples(queryRegion, areaLevel, controller.signal);
-        setLayerRanges(result.ranges);
-
-        if (!result.samples.length) {
-          setFocusPoint(null);
-          throw new Error('No weather attributes returned for this region.');
-        }
-
-        const nearest = findNearestPoint(result.samples, queryRegion.latitude, queryRegion.longitude);
-        setFocusPoint(nearest);
-
-        const updatedAtText = result.updatedAt
-          ? new Date(result.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setLastUpdatedAt(updatedAtText);
-      } catch (error) {
-        if (controller.signal.aborted) return;
-
-        setAttributeErrorMessage(
-          error instanceof Error ? error.message : 'Failed to load weather attributes.'
-        );
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsAttributeLoading(false);
-        }
-      }
-    };
-
-    loadAttributes();
-    return () => controller.abort();
-  }, [queryRegion]);
-
   const handleRegionChangeComplete = (nextRegion: Region) => {
     setMapRegion((previousRegion) => {
       const latDiff = Math.abs(previousRegion.latitude - nextRegion.latitude);
@@ -256,19 +276,218 @@ export default function Explore() {
     });
   };
 
+  const handleSearchLocation = async () => {
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearchingLocation(true);
+    setMarkedErrorMessage(null);
+
+    try {
+      const results = await searchLocationsWithNominatim(query);
+      setSearchResults(results);
+    } catch (error) {
+      setMarkedErrorMessage(
+        error instanceof Error ? error.message : 'Failed to search location.'
+      );
+      setSearchResults([]);
+    } finally {
+      setIsSearchingLocation(false);
+    }
+  };
+
+  const hydrateWeatherForLocations = async (locations: MarkedLocation[]) => {
+    if (!locations.length) {
+      setMarkedLocationWeather({});
+      return;
+    }
+
+    const weatherPairs = await Promise.all(
+      locations.map(async (location) => {
+        try {
+          const weather = await fetchMarkedLocationWeather(location.latitude, location.longitude);
+          return [location.id, weather] as const;
+        } catch {
+          return [
+            location.id,
+            {
+              temperatureC: null,
+              windSpeedKmh: null,
+              weatherCode: null,
+              label: 'Unknown',
+              iconName: 'help-circle-outline',
+              iconColor: '#64748b',
+            } satisfies MarkedLocationWeather,
+          ] as const;
+        }
+      })
+    );
+
+    setMarkedLocationWeather(Object.fromEntries(weatherPairs));
+  };
+
+  const refreshWeatherForLocation = async (location: MarkedLocation) => {
+    try {
+      const weather = await fetchMarkedLocationWeather(location.latitude, location.longitude);
+      setMarkedLocationWeather((previous) => ({ ...previous, [location.id]: weather }));
+    } catch {
+      setMarkedLocationWeather((previous) => ({
+        ...previous,
+        [location.id]: {
+          temperatureC: null,
+          windSpeedKmh: null,
+          weatherCode: null,
+          label: 'Unknown',
+          iconName: 'help-circle-outline',
+          iconColor: '#64748b',
+        },
+      }));
+    }
+  };
+
+  const focusMapToLocation = (latitude: number, longitude: number) => {
+    const nextRegion = {
+      latitude,
+      longitude,
+      // Zoom closer when focusing: use smaller deltas (zoom in)
+      latitudeDelta: Math.max(0.12, mapRegion.latitudeDelta * 0.22),
+      longitudeDelta: Math.max(0.12, mapRegion.longitudeDelta * 0.22),
+    };
+
+    mapRef.current?.animateToRegion(nextRegion, 450);
+    setMapRegion(nextRegion);
+  };
+
+  const handleSelectLocation = (location: MarkedLocation) => {
+    setSelectedMarkedLocationId(location.id);
+    setOpenedLocationMenuId(null);
+    focusMapToLocation(location.latitude, location.longitude);
+    void refreshWeatherForLocation(location);
+  };
+
+  const findNearbyMarkedLocation = (latitude: number, longitude: number) => {
+    const tolerance = 0.0008;
+    return markedLocations.find(
+      (location) =>
+        Math.abs(location.latitude - latitude) <= tolerance &&
+        Math.abs(location.longitude - longitude) <= tolerance
+    );
+  };
+
+  const openCreateLocationModal = (latitude: number, longitude: number, preferredName?: string) => {
+    const nearby = findNearbyMarkedLocation(latitude, longitude);
+
+    setPendingTargetLocationId(nearby?.id ?? null);
+    setPendingCoordinate({ latitude, longitude });
+    setPendingLocationName(
+      (nearby?.locationName ?? preferredName ?? `Pinned ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`).trim()
+    );
+    setIsCreateLocationModalVisible(true);
+  };
+
+  const handleMapPressToMark = (event: MapPressEvent) => {
+    const coordinate = event.nativeEvent.coordinate;
+    openCreateLocationModal(coordinate.latitude, coordinate.longitude);
+  };
+
+  const handleSaveLocationFromMapPress = async () => {
+    if (!pendingCoordinate) return;
+
+    setIsSavingLocationFromMap(true);
+    setMarkedErrorMessage(null);
+
+    try {
+      const resolvedName =
+        pendingLocationName.trim() ||
+        `Pinned ${pendingCoordinate.latitude.toFixed(4)}, ${pendingCoordinate.longitude.toFixed(4)}`;
+
+      if (pendingTargetLocationId) {
+        const updated = await updateMarkedLocationName(pendingTargetLocationId, resolvedName);
+        setMarkedLocations((previous) =>
+          previous.map((location) => (location.id === updated.id ? updated : location))
+        );
+        setSelectedMarkedLocationId(updated.id);
+        focusMapToLocation(updated.latitude, updated.longitude);
+      } else {
+        const saved = await addMarkedLocation({
+          deviceId: currentDeviceId,
+          locationName: resolvedName,
+          latitude: pendingCoordinate.latitude,
+          longitude: pendingCoordinate.longitude,
+        });
+
+        const weather = await fetchMarkedLocationWeather(saved.latitude, saved.longitude);
+
+        setMarkedLocations((previous) => [saved, ...previous.filter((item) => item.id !== saved.id)]);
+        setMarkedLocationWeather((previous) => ({ ...previous, [saved.id]: weather }));
+        setSelectedMarkedLocationId(saved.id);
+        focusMapToLocation(saved.latitude, saved.longitude);
+      }
+
+      setIsCreateLocationModalVisible(false);
+      setPendingCoordinate(null);
+      setPendingTargetLocationId(null);
+      setPendingLocationName('');
+    } catch (error) {
+      setMarkedErrorMessage(
+        error instanceof Error ? error.message : 'Failed to save marked location.'
+      );
+    } finally {
+      setIsSavingLocationFromMap(false);
+    }
+  };
+
+  const handleAddMarkedLocation = async (result: NominatimSearchResult) => {
+    setMarkedErrorMessage(null);
+    openCreateLocationModal(result.latitude, result.longitude, result.displayName);
+  };
+
+  const handleDeleteMarkedLocation = async (locationId: string) => {
+    setMarkedErrorMessage(null);
+
+    try {
+      await deleteMarkedLocation(locationId);
+      setMarkedLocations((previous) => previous.filter((location) => location.id !== locationId));
+      setMarkedLocationWeather((previous) => {
+        const next = { ...previous };
+        delete next[locationId];
+        return next;
+      });
+      setSelectedMarkedLocationId((previous) => (previous === locationId ? null : previous));
+      setOpenedLocationMenuId((previous) => (previous === locationId ? null : previous));
+    } catch (error) {
+      setMarkedErrorMessage(
+        error instanceof Error ? error.message : 'Failed to delete marked location.'
+      );
+    }
+  };
+
   const mapHeight = useMemo(() => Math.round(Dimensions.get('window').height * 0.56), []);
 
   const layerRangeText = useMemo(() => {
-    const range = layerRanges[activeLayer] ?? DEFAULT_RANGES[activeLayer];
+    const range = DEFAULT_RANGES[activeLayer];
     return {
       min: Number(range.min).toFixed(1),
       max: Number(range.max).toFixed(1),
       unit: selectedLayer.unit,
     };
-  }, [activeLayer, layerRanges, selectedLayer.unit]);
+  }, [activeLayer, selectedLayer.unit]);
 
   return (
-    <View className="flex-1 bg-transparent px-4 pt-6">
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+    >
+      <ScrollView
+        className="flex-1 bg-transparent"
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 24, paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
       <View className="mb-4">
         <Text className="text-2xl font-bold text-white">Global Weather Layers</Text>
         <Text className="mt-1 text-xs text-white/75">
@@ -278,33 +497,92 @@ export default function Explore() {
 
       <View className="mb-3">
         <Pressable
-          className="flex-row items-center justify-between rounded-xl border border-white/25 bg-white/12 px-4 py-3"
+          className={`flex-row items-center justify-between rounded-xl px-4 py-3 ${outsideMapSurfaceClass}`}
           onPress={() => setIsLayerPickerOpen((previous) => !previous)}
         >
-          <Text className="text-sm font-semibold text-white">{selectedLayer.label}</Text>
-          <Text className="text-base text-white/80">{isLayerPickerOpen ? '▴' : '▾'}</Text>
+          <Text className={`text-sm font-semibold ${outsideMapTextClass}`}>{selectedLayer.label}</Text>
+          <Text className={`text-base ${outsideMapMutedTextClass}`}>{isLayerPickerOpen ? '▴' : '▾'}</Text>
         </Pressable>
 
         {isLayerPickerOpen ? (
-          <View className="mt-2 overflow-hidden rounded-xl border border-white/20 bg-slate-900/90">
+          <View className={`mt-2 overflow-hidden rounded-xl ${outsideMapSurfaceClass}`}>
             {EXPLORE_LAYERS.map((layer) => {
               const isActive = layer.id === activeLayer;
 
               return (
                 <Pressable
                   key={layer.id}
-                  className={`px-4 py-3 ${isActive ? 'bg-white/20' : 'bg-transparent'}`}
+                  className={`px-4 py-3 ${isActive ? 'bg-sky-500/20' : 'bg-transparent'}`}
                   onPress={() => {
                     setActiveLayer(layer.id);
                     setIsLayerPickerOpen(false);
                   }}
                 >
-                  <Text className={`text-sm ${isActive ? 'font-semibold text-white' : 'text-white/85'}`}>
+                  <Text className={`text-sm ${isActive ? 'font-semibold text-slate-900' : 'text-slate-700'}`}>
                     {layer.label}
                   </Text>
                 </Pressable>
               );
             })}
+          </View>
+        ) : null}
+      </View>
+
+      <View className={`mb-3 rounded-xl p-3 ${outsideMapSurfaceClass}`}>
+        <Text className={`mb-2 text-xs font-semibold ${outsideMapTextClass}`}>Search Location (Nominatim)</Text>
+        <View className="flex-row items-center gap-2">
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search location..."
+            placeholderTextColor="rgba(71,85,105,0.75)"
+            className="flex-1 rounded-lg border border-slate-300 bg-white/75 px-3 py-2 text-sm text-slate-900"
+            onSubmitEditing={handleSearchLocation}
+            returnKeyType="search"
+          />
+        </View>
+
+        {searchResults.length > 0 ? (
+          <View className="mt-2 flex-row justify-end">
+            <Pressable
+              onPress={() => setSearchResults([])}
+              className="rounded-md border border-rose-300/80 bg-rose-100 px-2.5 py-1"
+            >
+              <Text className="text-[11px] font-semibold text-rose-700">Clear search results</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {isSearchingLocation ? (
+          <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>Searching...</Text>
+        ) : null}
+
+        {!isSearchingLocation && searchResults.length > 0 ? (
+          <View className="mt-2 gap-2">
+            {searchResults.map((result) => (
+              <View
+                key={result.id}
+                className="rounded-lg border border-slate-300 bg-white/75 px-3 py-2"
+              >
+                <Text className="text-[11px] text-slate-900" numberOfLines={2}>
+                  {result.displayName}
+                </Text>
+                <View className="mt-2 flex-row items-center justify-between">
+                  <Pressable
+                    onPress={() => focusMapToLocation(result.latitude, result.longitude)}
+                    className="rounded-md border border-sky-300 bg-sky-100 px-2 py-1"
+                  >
+                    <Text className="text-[11px] font-medium text-sky-700">View</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleAddMarkedLocation(result)}
+                    className="rounded-md border border-emerald-300 bg-emerald-100 px-2 py-1"
+                  >
+                    <Text className="text-[11px] font-medium text-emerald-700">Mark</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))}
           </View>
         ) : null}
       </View>
@@ -317,10 +595,12 @@ export default function Explore() {
           </View>
         ) : (
           <MapView
+            ref={mapRef}
             provider={PROVIDER_GOOGLE}
             style={{ flex: 1 }}
             initialRegion={mapRegion}
             onRegionChangeComplete={handleRegionChangeComplete}
+            onPress={handleMapPressToMark}
             scrollEnabled
             zoomEnabled
             rotateEnabled
@@ -335,44 +615,27 @@ export default function Explore() {
                 tileSize={256}
               />
             ) : null}
+
+            {markedLocations.map((location) => (
+              <Marker
+                key={location.id}
+                coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+                title={location.locationName}
+                description={`Current Weather: ${markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C • Current Wind ${markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h`}
+                pinColor={selectedMarkedLocationId === location.id ? '#0ea5e9' : '#ef4444'}
+                onPress={() => handleSelectLocation(location)}
+              />
+            ))}
           </MapView>
         )}
 
         <View className="absolute left-3 right-3 top-3 flex-row items-center justify-between rounded-lg border border-white/10 bg-slate-900/45 px-3 py-2">
           <Text className="text-[11px] text-white/85">{selectedLayer.label}</Text>
-          {lastUpdatedAt ? <Text className="text-[11px] text-white/60">{lastUpdatedAt}</Text> : null}
-        </View>
-
-        <BlurView
-          intensity={24}
-          tint="dark"
-          className="absolute bottom-3 left-3 max-w-[62%] overflow-hidden rounded-xl border border-white/20"
-        >
-          <View className="px-3 py-2">
-            <Text className="text-[11px] font-semibold text-white/90">Weather Attributes</Text>
-
-            {isAttributeLoading ? (
-              <Text className="mt-1 text-[11px] text-white/70">Loading attributes...</Text>
-            ) : focusPoint ? (
-              <>
-                <Text className="mt-1 text-[11px] text-white/80">
-                  {focusPoint.place.name}, {focusPoint.place.state}
-                </Text>
-                <Text className="mt-1 text-[11px] text-white/80">
-                  {selectedLayer.label}: {focusPoint.values[activeLayer].toFixed(1)} {selectedLayer.unit}
-                </Text>
-                <Text className="text-[11px] text-white/80">
-                  Humidity: {Math.round(focusPoint.metrics.humidity)}% · Wind: {focusPoint.values.wind.toFixed(1)} km/h
-                </Text>
-                <Text className="text-[11px] text-white/80">
-                  Clouds: {Math.round(focusPoint.values.clouds)}% · Pressure: {Math.round(focusPoint.metrics.pressure)} hPa
-                </Text>
-              </>
-            ) : (
-              <Text className="mt-1 text-[11px] text-white/70">No attributes available.</Text>
-            )}
+          <View className="items-end">
+            <Text className="text-[11px] text-white/75">Coverage: {coverageAreaKm2.toFixed(1)} km²</Text>
+            <Text className="text-[11px] text-white/70">Tap map to mark location</Text>
           </View>
-        </BlurView>
+        </View>
 
         <BlurView
           intensity={30}
@@ -407,40 +670,144 @@ export default function Explore() {
           </View>
         ) : null}
 
-        {attributeErrorMessage ? (
-          <View className="absolute bottom-36 left-3 right-3 rounded-md border border-red-200/80 bg-red-100/95 px-2 py-1">
-            <Text className="text-[11px] text-red-900">{attributeErrorMessage}</Text>
-          </View>
-        ) : null}
       </View>
 
+      <View className={`mt-3 rounded-xl p-3 ${outsideMapSurfaceClass}`}>
+        <Text className={`text-xs font-semibold ${outsideMapTextClass}`}>Marked Locations</Text>
+
+        {isMarkedLoading ? (
+          <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>Loading marked locations...</Text>
+        ) : markedLocations.length === 0 ? (
+          <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>No marked locations yet.</Text>
+        ) : (
+          <View className="mt-2 gap-2">
+            {markedLocations.slice(0, 6).map((location) => (
+              <Pressable
+                key={location.id}
+                onPress={() => handleSelectLocation(location)}
+                className={`rounded-lg px-3 py-2 ${
+                  selectedMarkedLocationId === location.id
+                    ? 'border border-sky-400 bg-sky-100/85'
+                    : 'border border-slate-300 bg-white/75'
+                }`}
+              >
+                <View className="flex-row items-start justify-between gap-2">
+                  <Text className="flex-1 text-[11px] text-slate-900" numberOfLines={2}>
+                    {location.locationName}
+                  </Text>
+                  <Pressable
+                    onPress={() => setOpenedLocationMenuId((previous) => (previous === location.id ? null : location.id))}
+                    className="flex-row items-center gap-1 rounded-md px-2 py-1"
+                  >
+                    <Ionicons name="ellipsis-vertical" size={12} color="#475569" />
+                  </Pressable>
+                </View>
+                <Text className="mt-1 text-[10px] text-slate-600">
+                  {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+                </Text>
+                <View className="mt-2 flex-row items-center gap-2">
+                  <Ionicons
+                    name={markedLocationWeather[location.id]?.iconName ?? 'help-circle-outline'}
+                    size={16}
+                    color={markedLocationWeather[location.id]?.iconColor ?? '#64748b'}
+                  />
+                  <Text className="text-[11px] text-slate-700">
+                    Current Weather: {markedLocationWeather[location.id]?.label ?? 'Unknown'}
+                  </Text>
+                </View>
+                <Text className="mt-1 text-[11px] text-slate-700">
+                  Current Temp: {markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C · Current Wind: {markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
+                </Text>
+
+                {openedLocationMenuId === location.id ? (
+                  <View className="mt-2 rounded-lg border border-slate-300 bg-white p-2">
+                    <Pressable
+                      onPress={() => handleSelectLocation(location)}
+                      className="flex-row items-center gap-2 rounded-md px-2 py-1"
+                    >
+                      <Ionicons name="locate" size={13} color="#0369a1" />
+                      <Text className="text-[11px] font-medium text-sky-700">Focus</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleDeleteMarkedLocation(location.id)}
+                      className="mt-1 flex-row items-center gap-2 rounded-md px-2 py-1"
+                    >
+                      <Ionicons name="trash-outline" size={13} color="#be123c" />
+                      <Text className="text-[11px] font-medium text-rose-700">Delete</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={isCreateLocationModalVisible}
+        onRequestClose={() => setIsCreateLocationModalVisible(false)}
+      >
+        <View className="flex-1 items-center justify-center bg-black/40 px-5">
+          <View className="w-full rounded-2xl border border-white/70 bg-white/95 p-4">
+            <Text className="text-base font-semibold text-slate-900">
+              {pendingTargetLocationId ? 'Update marked location' : 'Mark location'}
+            </Text>
+            <Text className="mt-1 text-xs text-slate-600">
+              Enter an optional location name before saving.
+            </Text>
+
+            <TextInput
+              value={pendingLocationName}
+              onChangeText={setPendingLocationName}
+              placeholder="Enter location_name"
+              placeholderTextColor="rgba(71,85,105,0.75)"
+              className="mt-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleSaveLocationFromMapPress}
+            />
+
+            <View className="mt-4 flex-row items-center justify-end gap-2">
+              <Pressable
+                onPress={() => {
+                  setIsCreateLocationModalVisible(false);
+                  setPendingCoordinate(null);
+                  setPendingTargetLocationId(null);
+                  setPendingLocationName('');
+                }}
+                className="rounded-md border border-slate-300 bg-slate-100 px-3 py-2"
+              >
+                <Text className="text-xs font-semibold text-slate-700">Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleSaveLocationFromMapPress}
+                disabled={isSavingLocationFromMap}
+                className="rounded-md border border-emerald-300 bg-emerald-100 px-3 py-2"
+              >
+                <Text className="text-xs font-semibold text-emerald-700">
+                  {isSavingLocationFromMap ? 'Saving...' : pendingTargetLocationId ? 'Update Location' : 'Save Location'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {locationErrorMessage ? (
-        <View className="absolute bottom-24 left-6 right-6 rounded-2xl border border-red-200 bg-red-100/95 p-3">
+        <View className="mt-3 rounded-2xl border border-red-200 bg-red-100/95 p-3">
           <Text className="text-xs font-medium text-red-900">{locationErrorMessage}</Text>
         </View>
       ) : null}
-    </View>
+
+      {markedErrorMessage ? (
+        <View className="mt-3 rounded-2xl border border-red-200 bg-red-100/95 p-3">
+          <Text className="text-xs font-medium text-red-900">{markedErrorMessage}</Text>
+        </View>
+      ) : null}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
-}
-
-function findNearestPoint(
-  points: ExploreSamplePoint[],
-  targetLatitude: number,
-  targetLongitude: number
-) {
-  let nearest = points[0];
-  let minDistance = Number.POSITIVE_INFINITY;
-
-  for (const point of points) {
-    const latitudeDiff = point.latitude - targetLatitude;
-    const longitudeDiff = point.longitude - targetLongitude;
-    const distance = latitudeDiff * latitudeDiff + longitudeDiff * longitudeDiff;
-
-    if (distance < minDistance) {
-      minDistance = distance;
-      nearest = point;
-    }
-  }
-
-  return nearest;
 }

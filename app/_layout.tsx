@@ -7,6 +7,8 @@ import '../global.css';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WeatherBackgroundProvider, useWeatherBackground } from '../components/WeatherBackgroundContext';
 import { StyleSheet, View } from 'react-native';
+import { usePushNotifications } from 'lib/usePushNotification';
+import { use } from 'react';
 
 function LayoutInner() {
   const { colors } = useWeatherBackground();
@@ -66,6 +68,7 @@ function LayoutInner() {
 }
 
 export default function Layout() {
+  usePushNotifications();
   return (
     <WeatherBackgroundProvider>
       <LayoutInner />
