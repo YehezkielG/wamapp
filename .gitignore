@@ -11,8 +11,6 @@ npm-debug.*
 web-build/
 
 
-*.env
-
 ios
 android
 
@@ -26,3 +24,7 @@ lib/edge-function/
 
 # Firebase / Google Services
 google-services.json
+
+eas.json
+
+*.env

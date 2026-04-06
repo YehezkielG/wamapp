@@ -1,5 +1,7 @@
 import * as Device from 'expo-device';
+import * as Application from 'expo-application';
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 import { supabase } from '../supabaseClient';
 
 export type MarkedLocation = {
@@ -16,6 +18,47 @@ let cachedDeviceId: string | null | undefined;
 type DeviceRow = {
   id: string;
 };
+
+type DeviceLocationRow = {
+  latitude: number | null;
+  longitude: number | null;
+};
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function hash32(input: string, seed: number) {
+  let hash = seed >>> 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function toHex8(value: number) {
+  return value.toString(16).padStart(8, '0');
+}
+
+function seedToUuid(seed: string) {
+  const h1 = hash32(seed, 0x811c9dc5);
+  const h2 = hash32(seed, 0x9747b28c);
+  const h3 = hash32(seed, 0xc2b2ae35);
+  const h4 = hash32(seed, 0x27d4eb2f);
+  let hex = `${toHex8(h1)}${toHex8(h2)}${toHex8(h3)}${toHex8(h4)}`;
+
+  hex = `${hex.slice(0, 12)}4${hex.slice(13)}`;
+  const variantNibble = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  hex = `${hex.slice(0, 16)}${variantNibble}${hex.slice(17)}`;
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function normalizeAsUuid(candidate: string) {
+  const normalized = candidate.trim().toLowerCase();
+  if (UUID_REGEX.test(normalized)) return normalized;
+  return seedToUuid(normalized);
+}
 
 function normalizeLocationRow(row: {
   id: string;
@@ -49,13 +92,96 @@ async function resolvePushToken() {
   }
 }
 
+async function resolveHardwareDeviceId() {
+  if (Platform.OS === 'android') {
+    const ssaid = (await Application.getAndroidId())?.trim();
+    if (ssaid) return normalizeAsUuid(`android:ssaid:${ssaid}`);
+
+    // Fallback (emulator / certain vendor devices): derive deterministic id from push token
+    const token = await resolvePushToken();
+    if (token) {
+      return normalizeAsUuid(`android:token:${token}`);
+    }
+
+    // Last fallback for development devices when token is unavailable
+    const brand = Device.brand ?? 'unknown-brand';
+    const model = Device.modelName ?? 'unknown-model';
+    const osVersion = Device.osVersion ?? 'unknown-os';
+    return normalizeAsUuid(
+      `android:fallback:${brand}:${model}:${osVersion}`.replace(/\s+/g, '-')
+    );
+  }
+
+  if (Platform.OS === 'ios') {
+    try {
+      const idfv = await Application.getIosIdForVendorAsync();
+      if (idfv) return normalizeAsUuid(`ios:idfv:${idfv}`);
+
+      const token = await resolvePushToken();
+      if (token) return normalizeAsUuid(`ios:token:${token}`);
+
+      const model = Device.modelName ?? 'unknown-model';
+      const osVersion = Device.osVersion ?? 'unknown-os';
+      return normalizeAsUuid(`ios:fallback:${model}:${osVersion}`);
+    } catch {
+      const model = Device.modelName ?? 'unknown-model';
+      const osVersion = Device.osVersion ?? 'unknown-os';
+      return normalizeAsUuid(`ios:error-fallback:${model}:${osVersion}`);
+    }
+  }
+
+  const model = Device.modelName ?? 'unknown-model';
+  const osVersion = Device.osVersion ?? 'unknown-os';
+  return normalizeAsUuid(`${Platform.OS}:fallback:${model}:${osVersion}`);
+}
+
 export async function getCurrentDeviceId() {
   if (cachedDeviceId !== undefined) {
     return cachedDeviceId;
   }
 
+  const deviceId = await resolveHardwareDeviceId();
+  if (!deviceId) {
+    cachedDeviceId = null;
+    return null;
+  }
+
   const pushToken = await resolvePushToken();
+
+  if (pushToken) {
+    const { data: byToken, error: byTokenError } = await supabase
+      .from('devices')
+      .select('id')
+      .eq('push_token', pushToken)
+      .single<DeviceRow>();
+
+    if (!byTokenError && byToken?.id) {
+      const { error: touchError } = await supabase
+        .from('devices')
+        .update({ last_active: new Date().toISOString() })
+        .eq('id', byToken.id);
+
+      if (touchError) {
+        console.warn('Failed to refresh device last_active:', touchError.message);
+      }
+
+      cachedDeviceId = byToken.id;
+      return byToken.id;
+    }
+  }
+
   if (!pushToken) {
+    const { data: existing, error: existingError } = await supabase
+      .from('devices')
+      .select('id')
+      .eq('id', deviceId)
+      .single<DeviceRow>();
+
+    if (!existingError && existing?.id) {
+      cachedDeviceId = existing.id;
+      return existing.id;
+    }
+
     cachedDeviceId = null;
     return null;
   }
@@ -64,10 +190,11 @@ export async function getCurrentDeviceId() {
     .from('devices')
     .upsert(
       {
+        id: deviceId,
         push_token: pushToken,
         last_active: new Date().toISOString(),
       },
-      { onConflict: 'push_token' }
+      { onConflict: 'id' }
     )
     .select('id')
     .single<DeviceRow>();
@@ -78,6 +205,51 @@ export async function getCurrentDeviceId() {
 
   cachedDeviceId = data.id;
   return data.id;
+}
+
+export async function saveDevicePushToken(pushToken: string) {
+  const deviceId = await resolveHardwareDeviceId();
+  if (!deviceId) return false;
+
+  const { data: byToken, error: byTokenError } = await supabase
+    .from('devices')
+    .select('id')
+    .eq('push_token', pushToken)
+    .single<DeviceRow>();
+
+  if (!byTokenError && byToken?.id) {
+    const { error: updateError } = await supabase
+      .from('devices')
+      .update({ last_active: new Date().toISOString() })
+      .eq('id', byToken.id);
+
+    if (updateError) {
+      console.warn('Failed to refresh device by token:', updateError.message);
+      return false;
+    }
+
+    cachedDeviceId = byToken.id;
+    return true;
+  }
+
+  const { error } = await supabase
+    .from('devices')
+    .upsert(
+      {
+        id: deviceId,
+        push_token: pushToken,
+        last_active: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    );
+
+  if (error) {
+    console.warn('Failed to save push token:', error.message);
+    return false;
+  }
+
+  cachedDeviceId = deviceId;
+  return true;
 }
 
 function haversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -92,35 +264,22 @@ function haversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2:
   return R * c;
 }
 
-async function resolvePushTokenInternal() {
-  if (!Device.isDevice) return null;
+export async function updateDeviceLocationIfMoved(deviceId: string | null, latitude: number, longitude: number, minMeters = 500) {
+  if (!deviceId) return false;
 
-  try {
-    const permission = await Notifications.getPermissionsAsync();
-    if (permission.status !== 'granted') return null;
-    const tokenResponse = await Notifications.getExpoPushTokenAsync();
-    return tokenResponse.data ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function updateDeviceLocationIfMoved(pushToken: string | null, latitude: number, longitude: number, minMeters = 500) {
-  if (!pushToken) return false;
-
-  const { data: deviceRows, error: fetchErr } = await supabase
+  const { data: deviceRow, error: fetchErr } = await supabase
     .from('devices')
-    .select('id, latitude, longitude')
-    .eq('push_token', pushToken)
+    .select('latitude, longitude, push_token')
+    .eq('id', deviceId)
     .limit(1)
-    .single();
+    .single<DeviceLocationRow & { push_token: string | null }>();
 
   if (fetchErr && fetchErr.code !== 'PGRST116') {
     // ignore not-found vs other errors
   }
 
-  const prevLat = deviceRows?.latitude ?? null;
-  const prevLon = deviceRows?.longitude ?? null;
+  const prevLat = deviceRow?.latitude ?? null;
+  const prevLon = deviceRow?.longitude ?? null;
 
   let shouldUpdate = false;
   if (prevLat === null || prevLon === null) {
@@ -132,13 +291,14 @@ export async function updateDeviceLocationIfMoved(pushToken: string | null, lati
 
   if (!shouldUpdate) return false;
 
-  const { error: upsertErr } = await supabase
+  const { error: updateErr } = await supabase
     .from('devices')
-    .upsert({ push_token: pushToken, latitude, longitude, last_active: new Date().toISOString() }, { onConflict: 'push_token' });
+    .update({ latitude, longitude, last_active: new Date().toISOString() })
+    .eq('id', deviceId);
 
-  if (upsertErr) {
+  if (updateErr) {
     // log but don't throw from background
-    console.warn('Failed to update device location:', upsertErr.message);
+    console.warn('Failed to update device location:', updateErr.message);
     return false;
   }
 
@@ -147,11 +307,39 @@ export async function updateDeviceLocationIfMoved(pushToken: string | null, lati
 
 export async function updateDeviceLocationFromCoords(latitude: number, longitude: number, minMeters = 500) {
   try {
-    const pushToken = await resolvePushTokenInternal();
-    if (!pushToken) return false;
-    return await updateDeviceLocationIfMoved(pushToken, latitude, longitude, minMeters);
+    const deviceId = await getCurrentDeviceId();
+    if (!deviceId) {
+      console.warn('updateDeviceLocationFromCoords skipped: device ID unavailable');
+      return false;
+    }
+    return await updateDeviceLocationIfMoved(deviceId, latitude, longitude, minMeters);
   } catch (err) {
     console.warn('updateDeviceLocationFromCoords error', err);
+    return false;
+  }
+}
+
+export async function saveDeviceLocationNow(latitude: number, longitude: number) {
+  try {
+    const deviceId = await getCurrentDeviceId();
+    if (!deviceId) {
+      console.warn('saveDeviceLocationNow skipped: device ID unavailable');
+      return false;
+    }
+
+    const { error } = await supabase
+      .from('devices')
+      .update({ latitude, longitude, last_active: new Date().toISOString() })
+      .eq('id', deviceId);
+
+    if (error) {
+      console.warn('Failed to save startup device location:', error.message);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('saveDeviceLocationNow error', err);
     return false;
   }
 }
@@ -198,7 +386,12 @@ export async function addMarkedLocation(input: {
 }
 
 export async function deleteMarkedLocation(locationId: string) {
-  const { error } = await supabase.from('marked_locations').delete().eq('id', locationId);
+  const deviceId = await getCurrentDeviceId();
+  let query = supabase.from('marked_locations').delete().eq('id', locationId);
+
+  query = deviceId ? query.eq('device_id', deviceId) : query.is('device_id', null);
+
+  const { error } = await query;
 
   if (error) {
     throw new Error(`Failed to delete marked location: ${error.message}`);
@@ -206,10 +399,16 @@ export async function deleteMarkedLocation(locationId: string) {
 }
 
 export async function updateMarkedLocationName(locationId: string, locationName: string) {
-  const { data, error } = await supabase
+  const deviceId = await getCurrentDeviceId();
+
+  let query = supabase
     .from('marked_locations')
     .update({ location_name: locationName })
-    .eq('id', locationId)
+    .eq('id', locationId);
+
+  query = deviceId ? query.eq('device_id', deviceId) : query.is('device_id', null);
+
+  const { data, error } = await query
     .select('id, device_id, location_name, latitude, longitude, created_at')
     .single();
 

@@ -19,7 +19,19 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   experiments: {
     tsconfigPaths: true,
   },
-  plugins: ['expo-router'],
+  plugins: [
+    'expo-router',
+    [
+      'expo-location',
+      {
+        locationWhenInUsePermission: 'Allow WAMApp to access your location while using the app.',
+        locationAlwaysAndWhenInUsePermission:
+          'Allow WAMApp to access your location always to keep location updates running in the background.',
+        isAndroidBackgroundLocationEnabled: true,
+        isIosBackgroundLocationEnabled: true,
+      },
+    ],
+  ],
   web: {
     favicon: './assets/favicon.png',
   },

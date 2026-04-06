@@ -3,12 +3,14 @@ import { useEffect } from 'react';
 import { Platform, Alert } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
-import { supabase } from './supabaseClient';
+import { saveDevicePushToken } from './explore/markedLocationsService';
 
 // Pengaturan default agar notif muncul walau app sedang dibuka (foreground)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -64,24 +66,15 @@ export const usePushNotifications = () => {
   // Fungsi untuk simpan/update ke Supabase
   const saveTokenToDatabase = async (pushToken: string) => {
     try {
-      const { data, error } = await supabase
-        .from('devices')
-        .upsert(
-          { 
-            push_token: pushToken, 
-            last_active: new Date().toISOString() 
-            // Nanti kalau fitur lokasi jalan, tambahin latitude & longitude di sini
-          },
-          { onConflict: 'push_token' } // Ini kunci dari fitur "Upsert"
-        );
+      const saved = await saveDevicePushToken(pushToken);
 
-      if (error) {
-        console.error("Gagal simpan token ke DB:", error.message);
+      if (!saved) {
+        console.error('Gagal simpan token ke DB: device ID tidak tersedia');
       } else {
-        console.log("Token berhasil diamankan di Supabase:", pushToken);
+        console.log('Token berhasil diamankan di Supabase:', pushToken);
       }
     } catch (err) {
-      console.error("Supabase Error:", err);
+      console.error('Supabase Error:', err);
     }
   };
 };
