@@ -188,7 +188,7 @@ export default function Chat() {
           </View>
 
           <Text className="mt-2 text-center text-xs" style={{ color: chatTheme.placeholder }}>
-            WAMchat might be wrong. Double-check the important information.
+            Double-check the important information.
           </Text>
         </View>
       </KeyboardAvoidingView>
