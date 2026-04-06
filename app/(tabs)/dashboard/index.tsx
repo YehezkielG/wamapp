@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DashboardSkeleton from '../../../components/skeleton_loading/Dashboard';
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import Forecast12Hours from '../../../components/dashboard/Forecast12Hours';
+import Forecast7Days from '../../../components/dashboard/Forecast7Days';
 import { useWeatherStore, WEATHER_REFRESH_INTERVAL_MS } from '../../../lib/weather/weatherStore';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -67,6 +68,8 @@ export default function Dashboard() {
       dewPointC: null,
     } as const);
   const forecastHours = data?.forecastHours ?? [];
+  const forecastDays = data?.forecastDays ?? [];
+  const forecastHoursByDate = data?.forecastHoursByDate ?? {};
 
   useEffect(() => {
     const timerId = setInterval(() => setNow(new Date()), 1000);
@@ -136,10 +139,7 @@ export default function Dashboard() {
   );
 
   const surfaceClass = useMemo(
-    () =>
-      isDarkUi
-        ? 'border border-white/30 bg-white/15'
-        : 'border border-white/70 bg-white/60',
+    () => (isDarkUi ? 'border border-white/30 bg-white/15' : 'border border-white/70 bg-white/60'),
     [isDarkUi]
   );
 
@@ -147,9 +147,12 @@ export default function Dashboard() {
 
   const timeOfDay = useMemo(() => {
     const hour = now.getHours();
-    if (hour >= 5 && hour < 12) return { label: 'Morning', iconName: 'sunny' as const, color: '#f59e0b' };
-    if (hour >= 12 && hour < 17) return { label: 'Afternoon', iconName: 'partly-sunny' as const, color: '#fb923c' };
-    if (hour >= 17 && hour < 20) return { label: 'Evening', iconName: 'moon' as const, color: '#7c3aed' };
+    if (hour >= 5 && hour < 12)
+      return { label: 'Morning', iconName: 'sunny' as const, color: '#f59e0b' };
+    if (hour >= 12 && hour < 17)
+      return { label: 'Afternoon', iconName: 'partly-sunny' as const, color: '#fb923c' };
+    if (hour >= 17 && hour < 20)
+      return { label: 'Evening', iconName: 'moon' as const, color: '#7c3aed' };
     return { label: 'Night', iconName: 'moon' as const, color: '#2563eb' };
   }, [now]);
 
@@ -186,11 +189,17 @@ export default function Dashboard() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-transparent" contentContainerClassName="items-center px-6 pt-14 pb-12">
-      <Text className={`mb-3 text-center text-3xl font-bold ${textColor.title}`}>Current Weather</Text>
+    <ScrollView
+      className="flex-1 bg-transparent"
+      contentContainerClassName="items-center px-6 pt-14 pb-12">
+      <Text className={`mb-3 text-center text-3xl font-bold ${textColor.title}`}>
+        Current Weather
+      </Text>
 
       <Text className={`mb-1.5 text-center text-lg ${textColor.secondary}`}>{locationName}</Text>
-      <Text className={`mb-2 text-center text-4xl font-bold ${textColor.primary}`}>{displayedTime}</Text>
+      <Text className={`mb-2 text-center text-4xl font-bold ${textColor.primary}`}>
+        {displayedTime}
+      </Text>
 
       <View className="mb-2.5 flex-row items-center justify-center gap-3">
         <Text className={`text-[56px] font-extrabold leading-[62px] ${textColor.primary}`}>
@@ -198,20 +207,31 @@ export default function Dashboard() {
         </Text>
 
         <View className={`flex-row overflow-hidden rounded-full border ${unitBorderClass}`}>
-          <Pressable className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600/50' : 'bg-white/50'}`} onPress={() => setUnit('C')}>
-            <Text className={`text-sm font-bold ${unit === 'C' ? 'text-white' : 'text-slate-800'}`}>C</Text>
+          <Pressable
+            className={`px-3.5 py-2 ${unit === 'C' ? 'bg-blue-600/50' : 'bg-white/50'}`}
+            onPress={() => setUnit('C')}>
+            <Text className={`text-sm font-bold ${unit === 'C' ? 'text-white' : 'text-slate-800'}`}>
+              C
+            </Text>
           </Pressable>
 
-          <Pressable className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600/50' : 'bg-white/50'}`} onPress={() => setUnit('F')}>
-            <Text className={`text-sm font-bold ${unit === 'F' ? 'text-white' : 'text-slate-800'}`}>F</Text>
+          <Pressable
+            className={`px-3.5 py-2 ${unit === 'F' ? 'bg-blue-600/50' : 'bg-white/50'}`}
+            onPress={() => setUnit('F')}>
+            <Text className={`text-sm font-bold ${unit === 'F' ? 'text-white' : 'text-slate-800'}`}>
+              F
+            </Text>
           </Pressable>
         </View>
       </View>
 
-      <View className={`mt-2 flex-row items-center justify-center gap-2 rounded-full px-4 py-2 ${surfaceClass}`}>
+      <View
+        className={`mt-2 flex-row items-center justify-center gap-2 rounded-full px-4 py-2 ${surfaceClass}`}>
         <Ionicons name={timeOfDay.iconName} size={22} color={timeOfDay.color} />
         <Ionicons name={weatherVisual.iconName} size={22} color={weatherVisual.iconColor} />
-        <Text className={`text-xl font-semibold ${textColor.weatherLabel}`}>{weatherVisual.label}</Text>
+        <Text className={`text-xl font-semibold ${textColor.weatherLabel}`}>
+          {weatherVisual.label}
+        </Text>
       </View>
 
       <Text className={`mt-8 text-2xl font-bold ${textColor.title}`}>Weather Details</Text>
@@ -227,6 +247,14 @@ export default function Dashboard() {
       {forecastHours.length ? (
         <Forecast12Hours items={forecastHours} unit={unit} isDarkUi={isDarkUi} />
       ) : null}
+
+      <Forecast7Days
+        items={forecastDays}
+        hoursByDate={forecastHoursByDate}
+        unit={unit}
+        isDarkUi={isDarkUi}
+        isLoading={isLoading && !data}
+      />
 
       {errorMessage ? (
         <Text className={`mt-4 text-center text-sm ${textColor.error}`}>{errorMessage}</Text>
