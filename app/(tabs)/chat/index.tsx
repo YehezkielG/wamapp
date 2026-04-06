@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import {
   sendMessageToRAGBackend,
   type Message,
 } from '../../../lib/chat/_chatUtils';
+import { useWeatherStore } from '../../../lib/weather/weatherStore';
 
 const INPUT_BOTTOM_GAP = 8;
 
@@ -26,7 +27,27 @@ export default function Chat() {
   const [inputText, setInputText] = useState('');
   const [inputHeight, setInputHeight] = useState(44);
   const [isLoading, setIsLoading] = useState(false); // State untuk loading bot
+  const [currentHour, setCurrentHour] = useState(() => new Date().getHours());
   const chatTheme = getChatThemeFromBackgroundColors(colors);
+  const weatherCode = useWeatherStore((state) => state.data?.weatherCode);
+
+  const isDarkUi = useMemo(() => {
+    const isNight = currentHour >= 19 || currentHour < 5;
+    const isStorm = weatherCode !== undefined && [95, 96, 99].includes(weatherCode);
+    return isNight || isStorm;
+  }, [currentHour, weatherCode]);
+
+  const headerSurfaceClass = isDarkUi
+    ? 'rounded-2xl border border-white/30 bg-white/12'
+    : 'rounded-2xl border border-white/70 bg-white/60';
+
+  useEffect(() => {
+    const timerId = setInterval(() => {
+      setCurrentHour(new Date().getHours());
+    }, 60000);
+
+    return () => clearInterval(timerId);
+  }, []);
 
   // Reference untuk autoscroll ke bawah
   const flatListRef = useRef<FlatList>(null);
@@ -59,7 +80,7 @@ export default function Chat() {
   return (
     <SafeAreaView className="flex-1 bg-transparent" style={{ paddingBottom: INPUT_BOTTOM_GAP }}>
       {/* Header WAMchat */}
-      <View className="px-4 py-4">
+      <View className={`mx-4 mt-3 px-4 py-4 ${headerSurfaceClass}`}>
         <Text className="text-xl font-bold" style={{ color: chatTheme.titleColor }}>
           WAMchat
         </Text>

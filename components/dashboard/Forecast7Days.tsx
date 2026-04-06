@@ -170,7 +170,7 @@ export default function Forecast7Days({
                 <Fragment key={`${item.date}-${item.weatherCode ?? 'u'}`}>
                   <Pressable
                     onPress={() => toggleSelectedDate(item.date)}
-                    className={`h-32 w-full rounded-2xl px-3 py-3 ${cardClass}`}>
+                    className={`w-full rounded-2xl px-3 py-3 ${cardClass}`}>
                     <Text className={`text-xs ${secondaryTextClass}`}>{dayLabel(index)}</Text>
 
                     <View className="mt-3 flex-row items-center gap-3">

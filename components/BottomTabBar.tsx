@@ -1,7 +1,8 @@
-import React from 'react';
-import { StyleSheet, TouchableOpacity, useColorScheme, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { ColorValue, StyleSheet, TouchableOpacity, useColorScheme, View } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useWeatherBackground } from './WeatherBackgroundContext';
 
 type TabItem = {
   name: string;
@@ -19,7 +20,31 @@ const TABS: TabItem[] = [
 export default function BottomTabBar() {
   const router = useRouter();
   const pathname = usePathname();
-  const isDark = useColorScheme() === 'dark';
+  const fallbackDark = useColorScheme() === 'dark';
+  const { colors } = useWeatherBackground();
+
+  const isDark = useMemo(() => {
+    const source = (colors?.[1] ?? colors?.[0]) as ColorValue | undefined;
+    if (typeof source !== 'string') return fallbackDark;
+
+    const hex = source.trim();
+    if (hex.startsWith('#') && (hex.length === 7 || hex.length === 9)) {
+      const red = Number.parseInt(hex.slice(1, 3), 16);
+      const green = Number.parseInt(hex.slice(3, 5), 16);
+      const blue = Number.parseInt(hex.slice(5, 7), 16);
+      if ([red, green, blue].some(Number.isNaN)) return fallbackDark;
+      const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+      return luminance < 120;
+    }
+
+    const rgbMatch = hex.match(/rgba?\(([^)]+)\)/i);
+    if (!rgbMatch) return fallbackDark;
+    const parts = rgbMatch[1].split(',').map((part) => Number.parseFloat(part.trim()));
+    if (parts.length < 3 || parts.slice(0, 3).some(Number.isNaN)) return fallbackDark;
+    const [red, green, blue] = parts;
+    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return luminance < 120;
+  }, [colors, fallbackDark]);
 
   const styles = createStyles(isDark);
 
