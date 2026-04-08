@@ -142,7 +142,6 @@ export async function getCurrentDeviceId() {
 
   const deviceId = await resolveHardwareDeviceId();
   if (!deviceId) {
-    cachedDeviceId = null;
     return null;
   }
 
@@ -182,7 +181,6 @@ export async function getCurrentDeviceId() {
       return existing.id;
     }
 
-    cachedDeviceId = null;
     return null;
   }
 
@@ -275,7 +273,7 @@ export async function updateDeviceLocationIfMoved(deviceId: string | null, latit
     .single<DeviceLocationRow & { push_token: string | null }>();
 
   if (fetchErr && fetchErr.code !== 'PGRST116') {
-    // ignore not-found vs other errors
+    console.warn('Failed to load current device location:', fetchErr.message);
   }
 
   const prevLat = deviceRow?.latitude ?? null;
@@ -291,10 +289,24 @@ export async function updateDeviceLocationIfMoved(deviceId: string | null, latit
 
   if (!shouldUpdate) return false;
 
+  const tokenForUpsert = deviceRow?.push_token ?? (await resolvePushToken());
+  if (!tokenForUpsert) {
+    console.warn('updateDeviceLocationIfMoved skipped: push token unavailable');
+    return false;
+  }
+
   const { error: updateErr } = await supabase
     .from('devices')
-    .update({ latitude, longitude, last_active: new Date().toISOString() })
-    .eq('id', deviceId);
+    .upsert(
+      {
+        id: deviceId,
+        push_token: tokenForUpsert,
+        latitude,
+        longitude,
+        last_active: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    );
 
   if (updateErr) {
     // log but don't throw from background
@@ -327,10 +339,30 @@ export async function saveDeviceLocationNow(latitude: number, longitude: number)
       return false;
     }
 
+    const { data: deviceRow } = await supabase
+      .from('devices')
+      .select('push_token')
+      .eq('id', deviceId)
+      .single<{ push_token: string | null }>();
+
+    const tokenForUpsert = deviceRow?.push_token ?? (await resolvePushToken());
+    if (!tokenForUpsert) {
+      console.warn('saveDeviceLocationNow skipped: push token unavailable');
+      return false;
+    }
+
     const { error } = await supabase
       .from('devices')
-      .update({ latitude, longitude, last_active: new Date().toISOString() })
-      .eq('id', deviceId);
+      .upsert(
+        {
+          id: deviceId,
+          push_token: tokenForUpsert,
+          latitude,
+          longitude,
+          last_active: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
 
     if (error) {
       console.warn('Failed to save startup device location:', error.message);

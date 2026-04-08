@@ -122,9 +122,9 @@ function LayoutInner() {
         try {
           const watcher = await Location.watchPositionAsync(
             {
-              accuracy: Location.Accuracy.Balanced,
-              distanceInterval: 500,
-              timeInterval: 60000,
+              accuracy: Location.Accuracy.High,
+              distanceInterval: 100,
+              timeInterval: 15000,
             },
             (location) => {
               const coords = location?.coords;
@@ -173,8 +173,9 @@ function LayoutInner() {
       const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
       if (!hasStarted) {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-          accuracy: Location.Accuracy.Balanced,
-          distanceInterval: 500,
+          accuracy: Location.Accuracy.High,
+          distanceInterval: 100,
+          timeInterval: 15000,
           foregroundService: {
             notificationTitle: 'WAMApp Location Tracking',
             notificationBody: 'Updating your location when you move 500 meters.',
