@@ -76,20 +76,28 @@ export default function Explore() {
 
   const [mapRegion, setMapRegion] = useState<Region>(DEFAULT_REGION);
   const [isLocationLoading, setIsLocationLoading] = useState(true);
+  const [isMapReady, setIsMapReady] = useState(false);
   const [isMarkedLoading, setIsMarkedLoading] = useState(true);
   const [isSearchingLocation, setIsSearchingLocation] = useState(false);
   const [locationErrorMessage, setLocationErrorMessage] = useState<string | null>(null);
   const [tileErrorMessage, setTileErrorMessage] = useState<string | null>(null);
+  const [mapProviderErrorMessage, setMapProviderErrorMessage] = useState<string | null>(null);
   const [markedErrorMessage, setMarkedErrorMessage] = useState<string | null>(null);
   const [activeLayer, setActiveLayer] = useState<ExploreLayerId>('temperature');
+  const [preferGoogleProvider, setPreferGoogleProvider] = useState(true);
   const [isLayerPickerOpen, setIsLayerPickerOpen] = useState(false);
   const [activeTileUrlTemplate, setActiveTileUrlTemplate] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<NominatimSearchResult[]>([]);
   const [markedLocations, setMarkedLocations] = useState<MarkedLocation[]>([]);
-  const [markedLocationWeather, setMarkedLocationWeather] = useState<Record<string, MarkedLocationWeather>>({});
+  const [markedLocationWeather, setMarkedLocationWeather] = useState<
+    Record<string, MarkedLocationWeather>
+  >({});
   const [selectedMarkedLocationId, setSelectedMarkedLocationId] = useState<string | null>(null);
-  const [pendingCoordinate, setPendingCoordinate] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [pendingCoordinate, setPendingCoordinate] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const [pendingTargetLocationId, setPendingTargetLocationId] = useState<string | null>(null);
   const [pendingLocationName, setPendingLocationName] = useState('');
   const [isCreateLocationModalVisible, setIsCreateLocationModalVisible] = useState(false);
@@ -180,6 +188,8 @@ export default function Explore() {
   useEffect(() => {
     const loadLocation = async () => {
       setIsLocationLoading(true);
+      setIsMapReady(false);
+      setMapProviderErrorMessage(null);
       setLocationErrorMessage(null);
 
       try {
@@ -210,6 +220,17 @@ export default function Explore() {
 
     loadLocation();
   }, []);
+
+  useEffect(() => {
+    if (isLocationLoading || isMapReady || !preferGoogleProvider) return;
+
+    const timeoutId = setTimeout(() => {
+      setPreferGoogleProvider(false);
+      setMapProviderErrorMessage('Google Maps failed to load. Switched to default map provider.');
+    }, 10000);
+
+    return () => clearTimeout(timeoutId);
+  }, [isLocationLoading, isMapReady, preferGoogleProvider]);
 
   useEffect(() => {
     const loadMarkedLocations = async () => {
@@ -271,9 +292,7 @@ export default function Explore() {
         setTileErrorMessage(null);
       } catch (error) {
         if (controller.signal.aborted) return;
-        setTileErrorMessage(
-          error instanceof Error ? error.message : 'Tile proxy check failed.'
-        );
+        setTileErrorMessage(error instanceof Error ? error.message : 'Tile proxy check failed.');
 
         if (directTileUrlTemplate) {
           setActiveTileUrlTemplate(directTileUrlTemplate);
@@ -292,12 +311,7 @@ export default function Explore() {
       const latDeltaDiff = Math.abs(previousRegion.latitudeDelta - nextRegion.latitudeDelta);
       const lonDeltaDiff = Math.abs(previousRegion.longitudeDelta - nextRegion.longitudeDelta);
 
-      if (
-        latDiff < 0.0008 &&
-        lonDiff < 0.0008 &&
-        latDeltaDiff < 0.0008 &&
-        lonDeltaDiff < 0.0008
-      ) {
+      if (latDiff < 0.0008 && lonDiff < 0.0008 && latDeltaDiff < 0.0008 && lonDeltaDiff < 0.0008) {
         return previousRegion;
       }
       return nextRegion;
@@ -318,9 +332,7 @@ export default function Explore() {
       const results = await searchLocationsWithNominatim(query);
       setSearchResults(results);
     } catch (error) {
-      setMarkedErrorMessage(
-        error instanceof Error ? error.message : 'Failed to search location.'
-      );
+      setMarkedErrorMessage(error instanceof Error ? error.message : 'Failed to search location.');
       setSearchResults([]);
     } finally {
       setIsSearchingLocation(false);
@@ -409,7 +421,11 @@ export default function Explore() {
     setPendingTargetLocationId(nearby?.id ?? null);
     setPendingCoordinate({ latitude, longitude });
     setPendingLocationName(
-      (nearby?.locationName ?? preferredName ?? `Pinned ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`).trim()
+      (
+        nearby?.locationName ??
+        preferredName ??
+        `Pinned ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+      ).trim()
     );
     setIsCreateLocationModalVisible(true);
   };
@@ -447,7 +463,10 @@ export default function Explore() {
 
         const weather = await fetchMarkedLocationWeather(saved.latitude, saved.longitude);
 
-        setMarkedLocations((previous) => [saved, ...previous.filter((item) => item.id !== saved.id)]);
+        setMarkedLocations((previous) => [
+          saved,
+          ...previous.filter((item) => item.id !== saved.id),
+        ]);
         setMarkedLocationWeather((previous) => ({ ...previous, [saved.id]: weather }));
         setSelectedMarkedLocationId(saved.id);
         focusMapToLocation(saved.latitude, saved.longitude);
@@ -532,356 +551,384 @@ export default function Explore() {
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-    >
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}>
       <ScrollView
         className="flex-1 bg-transparent"
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 24, paddingBottom: 120 }}
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-      <View className="mb-4">
-        <Text className={`text-2xl font-bold ${outsideMapTextClass}`}>Global Weather Layers</Text>
-        <Text className={`mt-1 text-xs ${outsideMapMutedTextClass}`}>
-           ({selectedLayer.label})
-        </Text>
-      </View>
-
-      <View className="mb-3">
-        <Pressable
-          className={`flex-row items-center justify-between rounded-xl px-4 py-3 ${outsideMapSurfaceClass}`}
-          onPress={() => setIsLayerPickerOpen((previous) => !previous)}
-        >
-          <Text className={`text-sm font-semibold ${outsideMapTextClass}`}>{selectedLayer.label}</Text>
-          <Text className={`text-base ${outsideMapMutedTextClass}`}>{isLayerPickerOpen ? '▴' : '▾'}</Text>
-        </Pressable>
-
-        {isLayerPickerOpen ? (
-          <View className={`mt-2 overflow-hidden rounded-xl ${outsideMapSurfaceClass}`}>
-            {EXPLORE_LAYERS.map((layer) => {
-              const isActive = layer.id === activeLayer;
-
-              return (
-                <Pressable
-                  key={layer.id}
-                  className={`px-4 py-3 ${isActive ? 'bg-sky-500/20' : 'bg-transparent'}`}
-                  onPress={() => {
-                    setActiveLayer(layer.id);
-                    setIsLayerPickerOpen(false);
-                  }}
-                >
-                  <Text className={`text-sm ${isActive ? 'font-semibold text-slate-900' : 'text-slate-700'}`}>
-                    {layer.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
-      </View>
-
-      <View className={`mb-3 rounded-xl p-3 ${outsideMapSurfaceClass}`}>
-        <Text className={`mb-2 text-xs font-semibold ${outsideMapTextClass}`}>Search Location (Nominatim)</Text>
-        <View className="flex-row items-center gap-2">
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search location..."
-            placeholderTextColor={panelInputPlaceholderColor}
-            className={panelInputClass}
-            onSubmitEditing={handleSearchLocation}
-            returnKeyType="search"
-          />
+        showsVerticalScrollIndicator={false}>
+        <View className="mb-4">
+          <Text className={`text-2xl font-bold ${outsideMapTextClass}`}>Global Weather Layers</Text>
+          <Text className={`mt-1 text-xs ${outsideMapMutedTextClass}`}>
+            ({selectedLayer.label})
+          </Text>
         </View>
 
-        {searchResults.length > 0 ? (
-          <View className="mt-2 flex-row justify-end">
-            <Pressable
-              onPress={() => setSearchResults([])}
-              className={`rounded-md px-2.5 py-1 ${isDarkUi ? 'border border-rose-200/60 bg-rose-500/20' : 'border border-rose-300/80 bg-rose-100'}`}
-            >
-              <Text className={`text-[11px] font-semibold ${isDarkUi ? 'text-rose-100' : 'text-rose-700'}`}>
-                Clear search results
-              </Text>
-            </Pressable>
+        <View className="mb-3">
+          <Pressable
+            className={`flex-row items-center justify-between rounded-xl px-4 py-3 ${outsideMapSurfaceClass}`}
+            onPress={() => setIsLayerPickerOpen((previous) => !previous)}>
+            <Text className={`text-sm font-semibold ${outsideMapTextClass}`}>
+              {selectedLayer.label}
+            </Text>
+            <Text className={`text-base ${outsideMapMutedTextClass}`}>
+              {isLayerPickerOpen ? '▴' : '▾'}
+            </Text>
+          </Pressable>
+
+          {isLayerPickerOpen ? (
+            <View className={`mt-2 overflow-hidden rounded-xl ${outsideMapSurfaceClass}`}>
+              {EXPLORE_LAYERS.map((layer) => {
+                const isActive = layer.id === activeLayer;
+
+                return (
+                  <Pressable
+                    key={layer.id}
+                    className={`px-4 py-3 ${isActive ? 'bg-sky-500/20' : 'bg-transparent'}`}
+                    onPress={() => {
+                      setActiveLayer(layer.id);
+                      setIsLayerPickerOpen(false);
+                    }}>
+                    <Text
+                      className={`text-sm ${isActive ? 'font-semibold text-slate-900' : 'text-slate-700'}`}>
+                      {layer.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
+
+        <View className={`mb-3 rounded-xl p-3 ${outsideMapSurfaceClass}`}>
+          <Text className={`mb-2 text-xs font-semibold ${outsideMapTextClass}`}>
+            Search Location (Nominatim)
+          </Text>
+          <View className="flex-row items-center gap-2">
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search location..."
+              placeholderTextColor={panelInputPlaceholderColor}
+              className={panelInputClass}
+              onSubmitEditing={handleSearchLocation}
+              returnKeyType="search"
+            />
           </View>
-        ) : null}
 
-        {isSearchingLocation ? (
-          <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>Searching...</Text>
-        ) : null}
-
-        {!isSearchingLocation && searchResults.length > 0 ? (
-          <View className="mt-2 gap-2">
-            {searchResults.map((result) => (
-              <View
-                key={result.id}
-                className={`rounded-lg px-3 py-2 ${isDarkUi ? 'border border-white/25 bg-white/10' : 'border border-slate-300 bg-white/75'}`}
-              >
-                <Text className={`text-[11px] ${outsideMapTextClass}`} numberOfLines={2}>
-                  {result.displayName}
+          {searchResults.length > 0 ? (
+            <View className="mt-2 flex-row justify-end">
+              <Pressable
+                onPress={() => setSearchResults([])}
+                className={`rounded-md px-2.5 py-1 ${isDarkUi ? 'border border-rose-200/60 bg-rose-500/20' : 'border border-rose-300/80 bg-rose-100'}`}>
+                <Text
+                  className={`text-[11px] font-semibold ${isDarkUi ? 'text-rose-100' : 'text-rose-700'}`}>
+                  Clear search results
                 </Text>
-                <View className="mt-2 flex-row items-center justify-between">
-                  <Pressable
-                    onPress={() => focusMapToLocation(result.latitude, result.longitude)}
-                    className="rounded-md border border-sky-300 bg-sky-100 px-2 py-1"
-                  >
-                    <Text className="text-[11px] font-medium text-sky-700">View</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handleAddMarkedLocation(result)}
-                    className="rounded-md border border-emerald-300 bg-emerald-100 px-2 py-1"
-                  >
-                    <Text className="text-[11px] font-medium text-emerald-700">Mark</Text>
-                  </Pressable>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {isSearchingLocation ? (
+            <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>Searching...</Text>
+          ) : null}
+
+          {!isSearchingLocation && searchResults.length > 0 ? (
+            <View className="mt-2 gap-2">
+              {searchResults.map((result) => (
+                <View
+                  key={result.id}
+                  className={`rounded-lg px-3 py-2 ${isDarkUi ? 'border border-white/25 bg-white/10' : 'border border-slate-300 bg-white/75'}`}>
+                  <Text className={`text-[11px] ${outsideMapTextClass}`} numberOfLines={2}>
+                    {result.displayName}
+                  </Text>
+                  <View className="mt-2 flex-row items-center justify-between">
+                    <Pressable
+                      onPress={() => focusMapToLocation(result.latitude, result.longitude)}
+                      className="rounded-md border border-sky-300 bg-sky-100 px-2 py-1">
+                      <Text className="text-[11px] font-medium text-sky-700">View</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleAddMarkedLocation(result)}
+                      className="rounded-md border border-emerald-300 bg-emerald-100 px-2 py-1">
+                      <Text className="text-[11px] font-medium text-emerald-700">Mark</Text>
+                    </Pressable>
+                  </View>
                 </View>
-              </View>
-            ))}
-          </View>
-        ) : null}
-      </View>
-
-      <View
-        style={{ height: mapHeight }}
-        className={`overflow-hidden rounded-xl ${isDarkUi ? 'border border-white/20 bg-black/10' : 'border border-slate-200 bg-white/30'}`}
-      >
-        {isLocationLoading ? (
-          <View className={`flex-1 items-center justify-center ${isDarkUi ? 'bg-white/10' : 'bg-slate-100/80'}`}>
-            <ActivityIndicator size="large" color={isDarkUi ? '#ffffff' : '#0f172a'} />
-            <Text className={`mt-3 text-sm ${outsideMapTextClass}`}>Loading map...</Text>
-          </View>
-        ) : (
-          <MapView
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={{ flex: 1 }}
-            initialRegion={mapRegion}
-            onRegionChangeComplete={handleRegionChangeComplete}
-            onPress={handleMapPressToMark}
-            scrollEnabled
-            zoomEnabled
-            rotateEnabled
-            pitchEnabled
-          >
-            {activeTileUrlTemplate ? (
-              <UrlTile
-                urlTemplate={activeTileUrlTemplate}
-                flipY={false}
-                maximumZ={19}
-                zIndex={2}
-                tileSize={256}
-              />
-            ) : null}
-
-            {markedLocations.map((location) => (
-              <Marker
-                key={location.id}
-                coordinate={{ latitude: location.latitude, longitude: location.longitude }}
-                title={location.locationName}
-                description={`Current Weather: ${markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C • Current Wind ${markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h`}
-                pinColor={selectedMarkedLocationId === location.id ? '#0ea5e9' : '#ef4444'}
-                onPress={() => handleSelectLocation(location)}
-              />
-            ))}
-          </MapView>
-        )}
-
-        <View
-          className={`absolute left-3 right-3 top-3 flex-row items-center justify-between rounded-lg px-3 py-2 ${isDarkUi ? 'border border-white/10 bg-slate-900/45' : 'border border-slate-200 bg-white/75'}`}
-        >
-          <Text className={`text-[11px] ${outsideMapTextClass}`}>{selectedLayer.label}</Text>
-          <View className="items-end">
-            <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
-              Coverage: {coverageAreaKm2.toFixed(1)} km²
-            </Text>
-            <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>Tap map to mark location</Text>
-          </View>
-        </View>
-
-        <BlurView
-          intensity={30}
-          tint={isDarkUi ? 'dark' : 'light'}
-          className="absolute bottom-3 right-3 overflow-hidden rounded-xl border border-white/20"
-        >
-          <View className="px-3 py-2">
-            <Text className={`text-[11px] font-semibold ${outsideMapTextClass}`}>
-              {selectedLayer.label} Legend
-            </Text>
-            <View className="mt-2 flex-row items-center gap-1">
-              {legendColors.map((color) => (
-                <View key={color} style={{ backgroundColor: color }} className="h-2.5 w-6 rounded-sm" />
               ))}
             </View>
-            <View className="mt-1 flex-row items-center justify-between">
-              <Text className={`text-[10px] ${outsideMapMutedTextClass}`}>
-                {layerRangeText.min} {layerRangeText.unit}
-              </Text>
-              <Text className={`text-[10px] ${outsideMapMutedTextClass}`}>
-                {layerRangeText.max} {layerRangeText.unit}
-              </Text>
+          ) : null}
+        </View>
+
+        <View
+          style={{ height: mapHeight }}
+          className={`overflow-hidden rounded-xl ${isDarkUi ? 'border border-white/20 bg-black/10' : 'border border-slate-200 bg-white/30'}`}>
+          {isLocationLoading ? (
+            <View
+              className={`flex-1 items-center justify-center ${isDarkUi ? 'bg-white/10' : 'bg-slate-100/80'}`}>
+              <ActivityIndicator size="large" color={isDarkUi ? '#ffffff' : '#0f172a'} />
+              <Text className={`mt-3 text-sm ${outsideMapTextClass}`}>Loading map...</Text>
             </View>
-          </View>
-        </BlurView>
+          ) : (
+            <MapView
+              ref={mapRef}
+              provider={preferGoogleProvider ? PROVIDER_GOOGLE : undefined}
+              style={{ flex: 1 }}
+              initialRegion={mapRegion}
+              onMapReady={() => {
+                setIsMapReady(true);
+                setMapProviderErrorMessage(null);
+              }}
+              onMapLoaded={() => {
+                setIsMapReady(true);
+                setMapProviderErrorMessage(null);
+              }}
+              onRegionChangeComplete={handleRegionChangeComplete}
+              onPress={handleMapPressToMark}
+              scrollEnabled
+              zoomEnabled
+              rotateEnabled
+              pitchEnabled>
+              {activeTileUrlTemplate ? (
+                <UrlTile
+                  urlTemplate={activeTileUrlTemplate}
+                  flipY={false}
+                  maximumZ={19}
+                  zIndex={2}
+                  tileSize={256}
+                />
+              ) : null}
 
-        {!activeTileUrlTemplate ? (
-          <View className="absolute bottom-3 left-3 right-28 rounded-md border border-amber-200/60 bg-amber-100/90 px-2 py-1">
-            <Text className="text-[11px] text-amber-900">
-              Missing tile source. Set `EXPO_PUBLIC_SUPABASE_URL` or fallback `EXPO_PUBLIC_OPENWEATHER_TILE_API_KEY`.
-            </Text>
-          </View>
-        ) : null}
+              {markedLocations.map((location) => (
+                <Marker
+                  key={location.id}
+                  coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+                  title={location.locationName}
+                  description={`Current Weather: ${markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C • Current Wind ${markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h`}
+                  pinColor={selectedMarkedLocationId === location.id ? '#0ea5e9' : '#ef4444'}
+                  onPress={() => handleSelectLocation(location)}
+                />
+              ))}
+            </MapView>
+          )}
 
-        {tileErrorMessage ? (
-          <View className="absolute bottom-24 left-3 right-3 rounded-md border border-red-200/80 bg-red-100/95 px-2 py-1">
-            <Text className="text-[11px] text-red-900">{tileErrorMessage}</Text>
-          </View>
-        ) : null}
-
-      </View>
-
-      <View className={`mt-3 rounded-xl p-3 ${outsideMapSurfaceClass}`}>
-        <Text className={`text-xs font-semibold ${outsideMapTextClass}`}>Marked Locations</Text>
-
-        {isMarkedLoading ? (
-          <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>Loading marked locations...</Text>
-        ) : markedLocations.length === 0 ? (
-          <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>No marked locations yet.</Text>
-        ) : (
-          <View className="mt-2 gap-2">
-            {markedLocations.slice(0, 6).map((location) => (
-              <Pressable
-                key={location.id}
-                onPress={() => handleSelectLocation(location)}
-                className={`rounded-lg px-3 py-2 ${
-                  selectedMarkedLocationId === location.id
-                    ? isDarkUi
-                      ? 'border border-sky-300 bg-sky-500/25'
-                      : 'border border-sky-400 bg-sky-100/85'
-                    : isDarkUi
-                      ? 'border border-white/25 bg-white/10'
-                      : 'border border-slate-300 bg-white/75'
-                }`}
-              >
-                <View className="flex-row items-start justify-between gap-2">
-                  <Text className={`flex-1 text-sm ${outsideMapTextClass}`} numberOfLines={2}>
-                    {location.locationName}
-                  </Text>
-                  <Pressable
-                    onPress={(event) => {
-                      event.stopPropagation();
-                      confirmDeleteMarkedLocation(location);
-                    }}
-                    className="flex-row items-center gap-1 rounded-md px-2 py-1"
-                  >
-                    <Ionicons name="trash-outline" size={14} color={isDarkUi ? '#fda4af' : '#be123c'} />
-                  </Pressable>
-                </View>
-                <Text className={`mt-1 text-[10px] ${outsideMapMutedTextClass}`}>
-                  {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
-                </Text>
-                <View className="mt-2 flex-row items-center gap-2">
-                  <Ionicons
-                    name={markedLocationWeather[location.id]?.iconName ?? 'help-circle-outline'}
-                    size={16}
-                    color={markedLocationWeather[location.id]?.iconColor ?? '#64748b'}
-                  />
-                  <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
-                    Current Weather: {markedLocationWeather[location.id]?.label ?? 'Unknown'}
-                  </Text>
-                </View>
-                <Text className={`mt-1 text-[11px] ${outsideMapMutedTextClass}`}>
-                  Current Temp: {markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C · Current Wind: {markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
-                </Text>
-
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </View>
-
-      <Modal
-        transparent
-        animationType="fade"
-        visible={isCreateLocationModalVisible}
-        onRequestClose={() => setIsCreateLocationModalVisible(false)}
-      >
-        <View className="flex-1 items-center justify-center bg-black/40 px-5">
           <View
-            className={`w-full rounded-2xl overflow-hidden ${isDarkUi ? 'border border-white/30 bg-slate-900/85' : 'border border-white/70 bg-white/95'}`}
-          >
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ paddingBottom: 12 }}
-              style={{ maxHeight: 320 }}
-              className="p-4"
-            >
-              <Text className={`text-base font-semibold ${outsideMapTextClass}`}>
-                {pendingTargetLocationId ? 'Update marked location' : 'Mark location'}
+            className={`absolute left-3 right-3 top-3 flex-row items-center justify-between rounded-lg px-3 py-2 ${isDarkUi ? 'border border-white/10 bg-slate-900/45' : 'border border-slate-200 bg-white/75'}`}>
+            <Text className={`text-[11px] ${outsideMapTextClass}`}>{selectedLayer.label}</Text>
+            <View className="items-end">
+              <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
+                Coverage: {coverageAreaKm2.toFixed(1)} km²
               </Text>
-              <Text className={`mt-1 text-xs ${outsideMapMutedTextClass}`}>
-                Enter an optional location name before saving.
+              <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
+                Tap map to mark location
               </Text>
-
-              <TextInput
-                value={pendingLocationName}
-                onChangeText={setPendingLocationName}
-                placeholder="Enter location_name"
-                placeholderTextColor={modalPlaceholderColor}
-                className={`mt-3 ${panelInputClass}`}
-                style={{
-                  color: isDarkUi ? '#ffffff' : '#0f172a',
-                  fontSize: 16,
-                  backgroundColor: modalInputBg,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  borderRadius: 10,
-                  minHeight: 48,
-                  marginBottom: 8,
-                }}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={handleSaveLocationFromMapPress}
-              />
-            </ScrollView>
-
-            <View className={`border-t px-4 py-3 flex-row justify-end gap-2 ${isDarkUi ? 'border-white/10' : 'border-slate-200'}`}>
-              <Pressable
-                onPress={() => {
-                  setIsCreateLocationModalVisible(false);
-                  setPendingCoordinate(null);
-                  setPendingTargetLocationId(null);
-                  setPendingLocationName('');
-                }}
-                className={`rounded-md px-3 py-2 ${isDarkUi ? 'border border-white/35 bg-white/10' : 'border border-slate-300 bg-slate-100'}`}
-              >
-                <Text className={`text-xs font-semibold ${isDarkUi ? 'text-white/90' : 'text-slate-700'}`}>Cancel</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={handleSaveLocationFromMapPress}
-                disabled={isSavingLocationFromMap}
-                className="rounded-md border border-emerald-300 bg-emerald-100 px-3 py-2"
-              >
-                <Text className="text-xs font-semibold text-emerald-700">
-                  {isSavingLocationFromMap ? 'Saving...' : pendingTargetLocationId ? 'Update Location' : 'Save Location'}
-                </Text>
-              </Pressable>
             </View>
           </View>
-        </View>
-      </Modal>
 
-      {locationErrorMessage ? (
-        <View className="mt-3 rounded-2xl border border-red-200 bg-red-100/95 p-3">
-          <Text className="text-xs font-medium text-red-900">{locationErrorMessage}</Text>
-        </View>
-      ) : null}
+          <BlurView
+            intensity={30}
+            tint={isDarkUi ? 'dark' : 'light'}
+            className="absolute bottom-3 right-3 overflow-hidden rounded-xl border border-white/20">
+            <View className="px-3 py-2">
+              <Text className={`text-[11px] font-semibold ${outsideMapTextClass}`}>
+                {selectedLayer.label} Legend
+              </Text>
+              <View className="mt-2 flex-row items-center gap-1">
+                {legendColors.map((color) => (
+                  <View
+                    key={color}
+                    style={{ backgroundColor: color }}
+                    className="h-2.5 w-6 rounded-sm"
+                  />
+                ))}
+              </View>
+              <View className="mt-1 flex-row items-center justify-between">
+                <Text className={`text-[10px] ${outsideMapMutedTextClass}`}>
+                  {layerRangeText.min} {layerRangeText.unit}
+                </Text>
+                <Text className={`text-[10px] ${outsideMapMutedTextClass}`}>
+                  {layerRangeText.max} {layerRangeText.unit}
+                </Text>
+              </View>
+            </View>
+          </BlurView>
 
-      {markedErrorMessage ? (
-        <View className="mt-3 rounded-2xl border border-red-200 bg-red-100/95 p-3">
-          <Text className="text-xs font-medium text-red-900">{markedErrorMessage}</Text>
+          {!activeTileUrlTemplate ? (
+            <View className="absolute bottom-3 left-3 right-28 rounded-md border border-amber-200/60 bg-amber-100/90 px-2 py-1">
+              <Text className="text-[11px] text-amber-900">
+                Missing tile source. Set `EXPO_PUBLIC_SUPABASE_URL` or fallback
+                `EXPO_PUBLIC_OPENWEATHER_TILE_API_KEY`.
+              </Text>
+            </View>
+          ) : null}
+
+          {tileErrorMessage ? (
+            <View className="absolute bottom-24 left-3 right-3 rounded-md border border-red-200/80 bg-red-100/95 px-2 py-1">
+              <Text className="text-[11px] text-red-900">{tileErrorMessage}</Text>
+            </View>
+          ) : null}
+
+          {mapProviderErrorMessage ? (
+            <View className="absolute bottom-40 left-3 right-3 rounded-md border border-amber-200/80 bg-amber-100/95 px-2 py-1">
+              <Text className="text-[11px] text-amber-900">{mapProviderErrorMessage}</Text>
+            </View>
+          ) : null}
         </View>
-      ) : null}
+
+        <View className={`mt-3 rounded-xl p-3 ${outsideMapSurfaceClass}`}>
+          <Text className={`text-xs font-semibold ${outsideMapTextClass}`}>Marked Locations</Text>
+
+          {isMarkedLoading ? (
+            <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>
+              Loading marked locations...
+            </Text>
+          ) : markedLocations.length === 0 ? (
+            <Text className={`mt-2 text-[11px] ${outsideMapMutedTextClass}`}>
+              No marked locations yet.
+            </Text>
+          ) : (
+            <View className="mt-2 gap-2">
+              {markedLocations.slice(0, 6).map((location) => (
+                <Pressable
+                  key={location.id}
+                  onPress={() => handleSelectLocation(location)}
+                  className={`rounded-lg px-3 py-2 ${
+                    selectedMarkedLocationId === location.id
+                      ? isDarkUi
+                        ? 'border border-sky-300 bg-sky-500/25'
+                        : 'border border-sky-400 bg-sky-100/85'
+                      : isDarkUi
+                        ? 'border border-white/25 bg-white/10'
+                        : 'border border-slate-300 bg-white/75'
+                  }`}>
+                  <View className="flex-row items-start justify-between gap-2">
+                    <Text className={`flex-1 text-sm ${outsideMapTextClass}`} numberOfLines={2}>
+                      {location.locationName}
+                    </Text>
+                    <Pressable
+                      onPress={(event) => {
+                        event.stopPropagation();
+                        confirmDeleteMarkedLocation(location);
+                      }}
+                      className="flex-row items-center gap-1 rounded-md px-2 py-1">
+                      <Ionicons
+                        name="trash-outline"
+                        size={14}
+                        color={isDarkUi ? '#fda4af' : '#be123c'}
+                      />
+                    </Pressable>
+                  </View>
+                  <Text className={`mt-1 text-[10px] ${outsideMapMutedTextClass}`}>
+                    {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+                  </Text>
+                  <View className="mt-2 flex-row items-center gap-2">
+                    <Ionicons
+                      name={markedLocationWeather[location.id]?.iconName ?? 'help-circle-outline'}
+                      size={16}
+                      color={markedLocationWeather[location.id]?.iconColor ?? '#64748b'}
+                    />
+                    <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
+                      Current Weather: {markedLocationWeather[location.id]?.label ?? 'Unknown'}
+                    </Text>
+                  </View>
+                  <Text className={`mt-1 text-[11px] ${outsideMapMutedTextClass}`}>
+                    Current Temp:{' '}
+                    {markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C ·
+                    Current Wind:{' '}
+                    {markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </View>
+
+        <Modal
+          transparent
+          animationType="fade"
+          visible={isCreateLocationModalVisible}
+          onRequestClose={() => setIsCreateLocationModalVisible(false)}>
+          <View className="flex-1 items-center justify-center bg-black/40 px-5">
+            <View
+              className={`w-full overflow-hidden rounded-2xl ${isDarkUi ? 'border border-white/30 bg-slate-900/85' : 'border border-white/70 bg-white/95'}`}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 12 }}
+                style={{ maxHeight: 320 }}
+                className="p-4">
+                <Text className={`text-base font-semibold ${outsideMapTextClass}`}>
+                  {pendingTargetLocationId ? 'Update marked location' : 'Mark location'}
+                </Text>
+                <Text className={`mt-1 text-xs ${outsideMapMutedTextClass}`}>
+                  Enter an optional location name before saving.
+                </Text>
+
+                <TextInput
+                  value={pendingLocationName}
+                  onChangeText={setPendingLocationName}
+                  placeholder="Enter location_name"
+                  placeholderTextColor={modalPlaceholderColor}
+                  className={`mt-3 ${panelInputClass}`}
+                  style={{
+                    color: isDarkUi ? '#ffffff' : '#0f172a',
+                    fontSize: 16,
+                    backgroundColor: modalInputBg,
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    minHeight: 48,
+                    marginBottom: 8,
+                  }}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={handleSaveLocationFromMapPress}
+                />
+              </ScrollView>
+
+              <View
+                className={`flex-row justify-end gap-2 border-t px-4 py-3 ${isDarkUi ? 'border-white/10' : 'border-slate-200'}`}>
+                <Pressable
+                  onPress={() => {
+                    setIsCreateLocationModalVisible(false);
+                    setPendingCoordinate(null);
+                    setPendingTargetLocationId(null);
+                    setPendingLocationName('');
+                  }}
+                  className={`rounded-md px-3 py-2 ${isDarkUi ? 'border border-white/35 bg-white/10' : 'border border-slate-300 bg-slate-100'}`}>
+                  <Text
+                    className={`text-xs font-semibold ${isDarkUi ? 'text-white/90' : 'text-slate-700'}`}>
+                    Cancel
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={handleSaveLocationFromMapPress}
+                  disabled={isSavingLocationFromMap}
+                  className="rounded-md border border-emerald-300 bg-emerald-100 px-3 py-2">
+                  <Text className="text-xs font-semibold text-emerald-700">
+                    {isSavingLocationFromMap
+                      ? 'Saving...'
+                      : pendingTargetLocationId
+                        ? 'Update Location'
+                        : 'Save Location'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {locationErrorMessage ? (
+          <View className="mt-3 rounded-2xl border border-red-200 bg-red-100/95 p-3">
+            <Text className="text-xs font-medium text-red-900">{locationErrorMessage}</Text>
+          </View>
+        ) : null}
+
+        {markedErrorMessage ? (
+          <View className="mt-3 rounded-2xl border border-red-200 bg-red-100/95 p-3">
+            <Text className="text-xs font-medium text-red-900">{markedErrorMessage}</Text>
+          </View>
+        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
