@@ -71,18 +71,7 @@ Deno.serve(async (request) => {
     const upstreamResponse = await fetch(upstreamUrl);
     if (!upstreamResponse.ok) {
       const detail = await upstreamResponse.text();
-
-      if (upstreamResponse.status === 401) {
-        return badRequest(
-          `OpenWeather tile request unauthorized (401). Check server secret OPENWEATHER_API_KEY and plan access. ${detail}`,
-          502
-        );
-      }
-
-      return badRequest(
-        `Tile upstream request failed: ${upstreamResponse.status} ${detail}`,
-        502
-      );
+      return badRequest(`Tile upstream request failed: ${upstreamResponse.status} ${detail}`, upstreamResponse.status);
     }
 
     const imageBytes = await upstreamResponse.arrayBuffer();

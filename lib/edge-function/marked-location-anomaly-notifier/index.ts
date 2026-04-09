@@ -1,10 +1,11 @@
 // @ts-nocheck
 // deno-lint-ignore-file no-explicit-any
 
-const FUNCTION_NAME = 'weather-anomaly-notifier';
+const FUNCTION_NAME = 'marked-location-anomaly-notifier';
 const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-const OPEN_METEO_CALL_INTERVAL_MIN = 15; // only call Open-Meteo on quarter-hour marks (UTC)
+const OPEN_METEO_CALL_INTERVAL_MIN = 15;
+const FORECAST_HOURS_AHEAD = 5;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,16 +13,21 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-type DeviceRow = {
+type MarkedLocationRow = {
   id: string;
+  device_id: string | null;
+  location_name: string | null;
   latitude: number | null;
   longitude: number | null;
+};
+
+type DeviceTokenRow = {
+  id: string;
   push_token: string | null;
 };
 
 type NotificationRow = {
   id: string;
-  category: string;
   data: Record<string, unknown> | null;
   created_at: string;
 };
@@ -89,8 +95,22 @@ function floorToHour(date: Date) {
 function getTargetForecastSlotIso() {
   const now = new Date();
   const nowHour = floorToHour(now);
-  const target = new Date(nowHour.getTime() + 5 * 60 * 60 * 1000);
+  const target = new Date(nowHour.getTime() + FORECAST_HOURS_AHEAD * 60 * 60 * 1000);
   return target.toISOString().slice(0, 13) + ':00';
+}
+
+function formatRelativeHours(slotIsoStr: string) {
+  try {
+    const slotDate = new Date(slotIsoStr + 'Z');
+    const now = new Date();
+    const diffMs = slotDate.getTime() - now.getTime();
+    const hours = Math.round(diffMs / (1000 * 60 * 60));
+    if (hours <= 0) return 'now';
+    if (hours === 1) return 'in 1 hour';
+    return `in ${hours} hours`;
+  } catch {
+    return 'in a few hours';
+  }
 }
 
 function detectAnomalies(input: {
@@ -101,21 +121,6 @@ function detectAnomalies(input: {
   slotIso: string;
 }) {
   const anomalies: Anomaly[] = [];
-
-  function formatRelativeHours(slotIsoStr: string) {
-    try {
-      const slotDate = new Date(slotIsoStr + 'Z');
-      const now = new Date();
-      const diffMs = slotDate.getTime() - now.getTime();
-      const hours = Math.round(diffMs / (1000 * 60 * 60));
-      if (hours <= 0) return 'now';
-      if (hours === 1) return 'in 1 hour';
-      return `in ${hours} hours`;
-    } catch {
-      return 'in a few hours';
-    }
-  }
-
   const rel = formatRelativeHours(input.slotIso);
 
   if (input.weatherCode >= 95) {
@@ -166,7 +171,7 @@ function detectAnomalies(input: {
   return anomalies;
 }
 
-async function fetchForecastThreeHoursAhead(latitude: number, longitude: number, slotIso: string) {
+async function fetchForecastFiveHoursAhead(latitude: number, longitude: number, slotIso: string) {
   const url = new URL(OPEN_METEO_FORECAST_URL);
   url.searchParams.set('latitude', String(latitude));
   url.searchParams.set('longitude', String(longitude));
@@ -178,18 +183,14 @@ async function fetchForecastThreeHoursAhead(latitude: number, longitude: number,
     url.toString(),
     {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { Accept: 'application/json' },
     },
     'Open-Meteo request'
   );
 
   const times = payload.minutely_15?.time ?? [];
   const idx = times.findIndex((item) => item === slotIso);
-  if (idx < 0) {
-    return null;
-  }
+  if (idx < 0) return null;
 
   return {
     precipitationMm: payload.minutely_15?.precipitation?.[idx] ?? 0,
@@ -199,8 +200,8 @@ async function fetchForecastThreeHoursAhead(latitude: number, longitude: number,
   };
 }
 
-function buildAnomalyKey(deviceId: string, slotIso: string, kind: string) {
-  return `${deviceId}|${slotIso}|${kind}`;
+function buildAnomalyKey(deviceId: string, locationId: string, slotIso: string, kind: string) {
+  return `${deviceId}|${locationId}|${slotIso}|${kind}`;
 }
 
 function isExpoPushToken(token: string | null | undefined) {
@@ -253,11 +254,8 @@ Deno.serve(async (request) => {
   }
 
   try {
-    // Only run heavy Open-Meteo requests on quarter-hour marks (UTC).
     const nowUtc = new Date();
     if (nowUtc.getUTCMinutes() % OPEN_METEO_CALL_INTERVAL_MIN !== 0) {
-      // Skip heavy Open-Meteo work outside quarter-hour marks (UTC).
-      // Return 200 with a small JSON summary so callers can inspect totals.
       return jsonResponse(
         {
           skipped: true,
@@ -269,6 +267,7 @@ Deno.serve(async (request) => {
         200
       );
     }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
@@ -289,17 +288,16 @@ Deno.serve(async (request) => {
       'Content-Type': 'application/json',
     };
 
-    const devices = await fetchJsonOrThrow<DeviceRow[]>(
-      `${supabaseUrl}/rest/v1/devices?select=id,latitude,longitude,push_token&latitude=not.is.null&longitude=not.is.null`,
+    const markedLocations = await fetchJsonOrThrow<MarkedLocationRow[]>(
+      `${supabaseUrl}/rest/v1/marked_locations?select=id,device_id,location_name,latitude,longitude&device_id=not.is.null&latitude=not.is.null&longitude=not.is.null`,
       { headers },
-      'Load devices'
+      'Load marked locations'
     );
 
-    const notifSince = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     const summary = {
       function: FUNCTION_NAME,
       targetSlotIso,
-      devicesScanned: devices.length,
+      locationsScanned: markedLocations.length,
       anomaliesDetected: 0,
       notificationsInserted: 0,
       pushAttempted: 0,
@@ -307,16 +305,35 @@ Deno.serve(async (request) => {
       pushFailed: 0,
       skippedDuplicates: 0,
       failures: 0,
-      failedDeviceIds: [] as string[],
+      failedLocationIds: [] as string[],
     };
 
-    for (const device of devices) {
-      try {
-        if (device.latitude === null || device.longitude === null) continue;
+    if (!markedLocations.length) {
+      return jsonResponse(summary, 200);
+    }
 
-        const forecast = await fetchForecastThreeHoursAhead(
-          device.latitude,
-          device.longitude,
+    const deviceIds = [...new Set(markedLocations.map((item) => item.device_id).filter(Boolean) as string[])];
+    const inClause = deviceIds.join(',');
+
+    const deviceRows = inClause
+      ? await fetchJsonOrThrow<DeviceTokenRow[]>(
+          `${supabaseUrl}/rest/v1/devices?select=id,push_token&id=in.(${inClause})`,
+          { headers },
+          'Load device push tokens'
+        )
+      : [];
+
+    const tokenByDeviceId = new Map(deviceRows.map((row) => [row.id, row.push_token]));
+
+    const notifSince = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+
+    for (const location of markedLocations) {
+      try {
+        if (!location.device_id || location.latitude === null || location.longitude === null) continue;
+
+        const forecast = await fetchForecastFiveHoursAhead(
+          location.latitude,
+          location.longitude,
           targetSlotIso
         );
         if (!forecast) continue;
@@ -326,24 +343,28 @@ Deno.serve(async (request) => {
         if (!anomalies.length) continue;
 
         const existing = await fetchJsonOrThrow<NotificationRow[]>(
-          `${supabaseUrl}/rest/v1/notifications?select=id,category,data,created_at&device_id=eq.${device.id}&category=eq.weather-anomaly&created_at=gte.${encodeURIComponent(notifSince)}&order=created_at.desc&limit=100`,
+          `${supabaseUrl}/rest/v1/notifications?select=id,data,created_at&device_id=eq.${location.device_id}&category=eq.weather-anomaly-marked-location&created_at=gte.${encodeURIComponent(notifSince)}&order=created_at.desc&limit=200`,
           { headers },
-          'Fetch existing notifications'
+          'Fetch existing marked-location notifications'
         );
+
         const existingKeys = new Set(
           existing
             .map((item) => {
               const slot = typeof item.data?.slot_iso === 'string' ? item.data.slot_iso : null;
               const kind = typeof item.data?.anomaly_kind === 'string' ? item.data.anomaly_kind : null;
-              if (!slot || !kind) return null;
-              return buildAnomalyKey(device.id, slot, kind);
+              const locationId = typeof item.data?.location_id === 'string' ? item.data.location_id : null;
+              if (!slot || !kind || !locationId) return null;
+              return buildAnomalyKey(location.device_id as string, locationId, slot, kind);
             })
             .filter(Boolean) as string[]
         );
 
+        const locationName = (location.location_name ?? 'Saved Location').trim() || 'Saved Location';
+
         const toInsert = anomalies
           .filter((anomaly) => {
-            const key = buildAnomalyKey(device.id, targetSlotIso, anomaly.kind);
+            const key = buildAnomalyKey(location.device_id as string, location.id, targetSlotIso, anomaly.kind);
             if (existingKeys.has(key)) {
               summary.skippedDuplicates += 1;
               return false;
@@ -351,15 +372,18 @@ Deno.serve(async (request) => {
             return true;
           })
           .map((anomaly) => ({
-            device_id: device.id,
-            title: anomaly.title,
+            device_id: location.device_id,
+            title: `${locationName}: ${anomaly.title}`,
             message: anomaly.message,
-            category: 'weather-anomaly',
+            category: 'weather-anomaly-marked-location',
             data: {
               anomaly_kind: anomaly.kind,
               severity: anomaly.severity,
               slot_iso: targetSlotIso,
-              forecast: forecast,
+              location_id: location.id,
+              location_name: locationName,
+              source: 'marked-location',
+              forecast,
             },
             is_read: false,
           }));
@@ -382,12 +406,13 @@ Deno.serve(async (request) => {
 
         summary.notificationsInserted += toInsert.length;
 
-        if (isExpoPushToken(device.push_token)) {
+        const pushToken = tokenByDeviceId.get(location.device_id);
+        if (isExpoPushToken(pushToken)) {
           for (const payload of toInsert) {
             summary.pushAttempted += 1;
             try {
               await sendExpoPush({
-                to: device.push_token,
+                to: pushToken,
                 title: payload.title,
                 body: payload.message,
                 data: {
@@ -399,19 +424,19 @@ Deno.serve(async (request) => {
               summary.pushSent += 1;
             } catch (pushError) {
               summary.pushFailed += 1;
-              console.error('expo push send failed', {
-                deviceId: device.id,
+              console.error('expo push send failed (marked location)', {
+                locationId: location.id,
                 error: pushError instanceof Error ? pushError.message : String(pushError),
               });
             }
           }
         }
-      } catch (deviceError) {
+      } catch (locationError) {
         summary.failures += 1;
-        summary.failedDeviceIds.push(device.id);
-        console.error('device anomaly processing failed', {
-          deviceId: device.id,
-          error: deviceError instanceof Error ? deviceError.message : String(deviceError),
+        summary.failedLocationIds.push(location.id);
+        console.error('marked-location anomaly processing failed', {
+          locationId: location.id,
+          error: locationError instanceof Error ? locationError.message : String(locationError),
         });
       }
     }
@@ -421,7 +446,7 @@ Deno.serve(async (request) => {
     return jsonResponse(
       {
         error: true,
-        message: error instanceof Error ? error.message : 'Unexpected anomaly notifier error',
+        message: error instanceof Error ? error.message : 'Unexpected marked-location anomaly notifier error',
       },
       500
     );
