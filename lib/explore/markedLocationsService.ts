@@ -95,6 +95,7 @@ async function resolvePushToken() {
 async function resolveHardwareDeviceId() {
   if (Platform.OS === 'android') {
     const ssaid = (await Application.getAndroidId())?.trim();
+
     if (ssaid) return normalizeAsUuid(`android:ssaid:${ssaid}`);
 
     // Fallback (emulator / certain vendor devices): derive deterministic id from push token
@@ -107,6 +108,7 @@ async function resolveHardwareDeviceId() {
     const brand = Device.brand ?? 'unknown-brand';
     const model = Device.modelName ?? 'unknown-model';
     const osVersion = Device.osVersion ?? 'unknown-os';
+    
     return normalizeAsUuid(
       `android:fallback:${brand}:${model}:${osVersion}`.replace(/\s+/g, '-')
     );
@@ -142,6 +144,7 @@ export async function getCurrentDeviceId() {
 
   const deviceId = await resolveHardwareDeviceId();
   if (!deviceId) {
+    cachedDeviceId = null;
     return null;
   }
 
@@ -152,7 +155,7 @@ export async function getCurrentDeviceId() {
       .from('devices')
       .select('id')
       .eq('push_token', pushToken)
-      .single<DeviceRow>();
+      .maybeSingle<DeviceRow>();
 
     if (!byTokenError && byToken?.id) {
       const { error: touchError } = await supabase
@@ -174,13 +177,14 @@ export async function getCurrentDeviceId() {
       .from('devices')
       .select('id')
       .eq('id', deviceId)
-      .single<DeviceRow>();
+      .maybeSingle<DeviceRow>();
 
     if (!existingError && existing?.id) {
       cachedDeviceId = existing.id;
       return existing.id;
     }
 
+    cachedDeviceId = null;
     return null;
   }
 
@@ -213,7 +217,7 @@ export async function saveDevicePushToken(pushToken: string) {
     .from('devices')
     .select('id')
     .eq('push_token', pushToken)
-    .single<DeviceRow>();
+    .maybeSingle<DeviceRow>();
 
   if (!byTokenError && byToken?.id) {
     const { error: updateError } = await supabase
@@ -270,10 +274,10 @@ export async function updateDeviceLocationIfMoved(deviceId: string | null, latit
     .select('latitude, longitude, push_token')
     .eq('id', deviceId)
     .limit(1)
-    .single<DeviceLocationRow & { push_token: string | null }>();
+    .maybeSingle<DeviceLocationRow & { push_token: string | null }>();
 
   if (fetchErr && fetchErr.code !== 'PGRST116') {
-    console.warn('Failed to load current device location:', fetchErr.message);
+    // ignore not-found vs other errors
   }
 
   const prevLat = deviceRow?.latitude ?? null;
@@ -289,24 +293,10 @@ export async function updateDeviceLocationIfMoved(deviceId: string | null, latit
 
   if (!shouldUpdate) return false;
 
-  const tokenForUpsert = deviceRow?.push_token ?? (await resolvePushToken());
-  if (!tokenForUpsert) {
-    console.warn('updateDeviceLocationIfMoved skipped: push token unavailable');
-    return false;
-  }
-
   const { error: updateErr } = await supabase
     .from('devices')
-    .upsert(
-      {
-        id: deviceId,
-        push_token: tokenForUpsert,
-        latitude,
-        longitude,
-        last_active: new Date().toISOString(),
-      },
-      { onConflict: 'id' }
-    );
+    .update({ latitude, longitude, last_active: new Date().toISOString() })
+    .eq('id', deviceId);
 
   if (updateErr) {
     // log but don't throw from background
@@ -339,30 +329,10 @@ export async function saveDeviceLocationNow(latitude: number, longitude: number)
       return false;
     }
 
-    const { data: deviceRow } = await supabase
-      .from('devices')
-      .select('push_token')
-      .eq('id', deviceId)
-      .single<{ push_token: string | null }>();
-
-    const tokenForUpsert = deviceRow?.push_token ?? (await resolvePushToken());
-    if (!tokenForUpsert) {
-      console.warn('saveDeviceLocationNow skipped: push token unavailable');
-      return false;
-    }
-
     const { error } = await supabase
       .from('devices')
-      .upsert(
-        {
-          id: deviceId,
-          push_token: tokenForUpsert,
-          latitude,
-          longitude,
-          last_active: new Date().toISOString(),
-        },
-        { onConflict: 'id' }
-      );
+      .update({ latitude, longitude, last_active: new Date().toISOString() })
+      .eq('id', deviceId);
 
     if (error) {
       console.warn('Failed to save startup device location:', error.message);

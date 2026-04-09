@@ -54,7 +54,6 @@ export const usePushNotifications = () => {
         return;
       }
       
-      // Ambil token (Jika nanti pakai EAS Build, butuh projectId di app.json)
       token = (await Notifications.getExpoPushTokenAsync()).data;
     } else {
       console.log('Push notification harus di-test di perangkat fisik (HP Asli).');
@@ -67,7 +66,6 @@ export const usePushNotifications = () => {
   const saveTokenToDatabase = async (pushToken: string) => {
     try {
       const saved = await saveDevicePushToken(pushToken);
-
       if (!saved) {
         console.error('Gagal simpan token ke DB: device ID tidak tersedia');
       } else {

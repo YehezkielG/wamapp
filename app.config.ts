@@ -4,7 +4,7 @@ import type { ExpoConfig, ConfigContext } from 'expo/config';
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'WAMApp',
-  slug: 'WAMApp',
+  slug: 'wamapp',
   version: '1.0.0',
   owner: 'zekiell12',
   orientation: 'portrait',
@@ -45,7 +45,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
   },
   android: {
-    package: 'com.zekiell12.WAMApp',
+    package: 'com.zekiell12.wamapp',
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#ffffff',
@@ -69,7 +69,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   extra: {
     eas: {
-      projectId: 'f0603b47-8279-4844-95f8-286bc60bafb6',
+      projectId: process.env.EXPO_PUBLIC_ID_PROJECT,
     },
   },
 });
