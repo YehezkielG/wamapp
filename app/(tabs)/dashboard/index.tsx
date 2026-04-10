@@ -60,6 +60,8 @@ export default function Dashboard() {
   const [now, setNow] = useState(new Date());
   const [unit, setUnit] = useState<'C' | 'F'>('C');
   const [latestNotification, setLatestNotification] = useState<LatestNotification | null>(null);
+  const [dismissedNotificationId, setDismissedNotificationId] = useState<string | null>(null);
+  const [notificationRefreshTick, setNotificationRefreshTick] = useState(0);
   const { data, isLoading, errorMessage } = useWeatherStore(
     useShallow((state) => ({
       data: state.data,
@@ -118,32 +120,18 @@ export default function Dashboard() {
     const loadLatestNotification = async () => {
       try {
         const deviceId = await getCurrentDeviceId().catch(() => null);
-
-        if (deviceId) {
-          const { data: byDevice, error: byDeviceError } = await supabase
-            .from('notifications')
-            .select('id,title,message,category,created_at')
-            .eq('device_id', deviceId)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (!byDeviceError && byDevice?.length) {
-            setLatestNotification((byDevice[0] as LatestNotification) ?? null);
-            return;
+        const { data, error } = await supabase.functions.invoke<{ notification: LatestNotification | null }>(
+          'latest-device-notification',
+          {
+            body: { deviceId },
           }
+        );
+
+        if (error) {
+          throw error;
         }
 
-        const { data: latestAny, error: latestAnyError } = await supabase
-          .from('notifications')
-          .select('id,title,message,category,created_at')
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (latestAnyError) {
-          throw latestAnyError;
-        }
-
-        setLatestNotification((latestAny?.[0] as LatestNotification) ?? null);
+        setLatestNotification(data?.notification ?? null);
       } catch {
         setLatestNotification(null);
       }
@@ -156,7 +144,7 @@ export default function Dashboard() {
     }, 30000);
 
     return () => clearInterval(timerId);
-  }, []);
+  }, [notificationRefreshTick]);
 
   const displayedTime = useMemo(
     () =>
@@ -244,19 +232,46 @@ export default function Dashboard() {
     return <DashboardSkeleton />;
   }
 
+  const visibleNotification =
+    latestNotification &&
+    latestNotification.id !== dismissedNotificationId &&
+    Date.now() - new Date(latestNotification.created_at).getTime() < 5 * 60 * 60 * 1000
+      ? latestNotification
+      : null;
+
+  const handleDismissNotification = async () => {
+    if (!visibleNotification) return;
+
+    setDismissedNotificationId(visibleNotification.id);
+
+    try {
+      await supabase.functions.invoke('latest-device-notification', {
+        body: {
+          action: 'mark-read',
+          notificationId: visibleNotification.id,
+        },
+      });
+    } catch {
+      // Keep dismissed locally; next refresh may re-evaluate from server.
+    }
+
+    setNotificationRefreshTick((previous) => previous + 1);
+  };
+
   return (
     <ScrollView
       className="flex-1 bg-transparent"
       contentContainerClassName="items-center px-6 pt-5 pb-12">
-      {latestNotification ? (
+      {visibleNotification ? (
         <View className="mb-5 w-full">
           <WeatherAlertEmergencyCard
             alert={{
-              title: latestNotification.title,
-              message: latestNotification.message,
-              createdAt: latestNotification.created_at,
+              title: visibleNotification.title,
+              message: visibleNotification.message,
+              createdAt: visibleNotification.created_at,
             }}
             isDarkUi={isDarkUi}
+            onDismiss={handleDismissNotification}
           />
         </View>
       ) : null}

@@ -7,6 +7,7 @@ Folder ini berisi kode function untuk memanggil provider cuaca dari server-side.
 - `openweather-explore` → file: `openweather-explore/index.ts`
 - `weather-anomaly-notifier` → file: `weather-anomaly-notifier/index.ts`
 - `marked-location-anomaly-notifier` → file: `marked-location-anomaly-notifier/index.ts`
+- `latest-device-notification` → file: `latest-device-notification/index.ts`
 
 ## Marked location anomaly notifier (5 jam ke depan)
 
