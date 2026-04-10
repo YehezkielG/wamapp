@@ -5,7 +5,7 @@ const FUNCTION_NAME = 'marked-location-anomaly-notifier';
 const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const OPEN_METEO_CALL_INTERVAL_MIN = 15;
-const FORECAST_HOURS_AHEAD = 5;
+const FORECAST_WINDOW_MINUTES = 60 * 5;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -86,17 +86,33 @@ async function fetchJsonOrThrow<T>(url: string, init: RequestInit, operation: st
   }
 }
 
-function floorToHour(date: Date) {
+function floorToQuarterHourUtc(date: Date) {
   const cloned = new Date(date);
-  cloned.setMinutes(0, 0, 0);
+  cloned.setUTCSeconds(0, 0);
+  const minute = cloned.getUTCMinutes();
+  cloned.setUTCMinutes(minute - (minute % 15));
   return cloned;
 }
 
-function getTargetForecastSlotIso() {
+function toUtcMinuteIso(date: Date) {
+  return date.toISOString().slice(0, 16);
+}
+
+function toSlotIso(dateLike: string | Date) {
+  const date = typeof dateLike === 'string' ? new Date(dateLike + 'Z') : dateLike;
+  return date.toISOString().slice(0, 16) + ':00';
+}
+
+function getForecastWindowIso() {
   const now = new Date();
-  const nowHour = floorToHour(now);
-  const target = new Date(nowHour.getTime() + FORECAST_HOURS_AHEAD * 60 * 60 * 1000);
-  return target.toISOString().slice(0, 13) + ':00';
+  const start = floorToQuarterHourUtc(now);
+  const end = new Date(start.getTime() + FORECAST_WINDOW_MINUTES * 60 * 1000);
+
+  return {
+    startIso: toUtcMinuteIso(start),
+    endIso: toUtcMinuteIso(end),
+    targetSlotIso: toSlotIso(end),
+  };
 }
 
 function formatRelativeHours(slotIsoStr: string) {
@@ -171,12 +187,17 @@ function detectAnomalies(input: {
   return anomalies;
 }
 
-async function fetchForecastFiveHoursAhead(latitude: number, longitude: number, slotIso: string) {
+async function fetchForecastInWindow(
+  latitude: number,
+  longitude: number,
+  window: { startIso: string; endIso: string }
+) {
   const url = new URL(OPEN_METEO_FORECAST_URL);
   url.searchParams.set('latitude', String(latitude));
   url.searchParams.set('longitude', String(longitude));
   url.searchParams.set('minutely_15', 'temperature_2m,precipitation,windspeed_10m,weathercode');
-  url.searchParams.set('forecast_days', '2');
+  url.searchParams.set('start_minutely_15', window.startIso);
+  url.searchParams.set('end_minutely_15', window.endIso);
   url.searchParams.set('timezone', 'UTC');
 
   const payload = await fetchJsonOrThrow<ForecastPayload>(
@@ -189,10 +210,15 @@ async function fetchForecastFiveHoursAhead(latitude: number, longitude: number, 
   );
 
   const times = payload.minutely_15?.time ?? [];
-  const idx = times.findIndex((item) => item === slotIso);
+  if (!times.length) return null;
+
+  const targetIdx = times.findIndex((item) => item === window.endIso || item.startsWith(window.endIso));
+  const idx = targetIdx >= 0 ? targetIdx : times.length - 1;
+
   if (idx < 0) return null;
 
   return {
+    slotIso: toSlotIso(times[idx]),
     precipitationMm: payload.minutely_15?.precipitation?.[idx] ?? 0,
     windKmh: payload.minutely_15?.windspeed_10m?.[idx] ?? 0,
     weatherCode: payload.minutely_15?.weathercode?.[idx] ?? 0,
@@ -281,7 +307,8 @@ Deno.serve(async (request) => {
       );
     }
 
-    const targetSlotIso = getTargetForecastSlotIso();
+    const windowIso = getForecastWindowIso();
+    const targetSlotIso = windowIso.targetSlotIso;
     const headers = {
       apikey: serviceRoleKey,
       Authorization: `Bearer ${serviceRoleKey}`,
@@ -331,14 +358,15 @@ Deno.serve(async (request) => {
       try {
         if (!location.device_id || location.latitude === null || location.longitude === null) continue;
 
-        const forecast = await fetchForecastFiveHoursAhead(
+        const forecast = await fetchForecastInWindow(
           location.latitude,
           location.longitude,
-          targetSlotIso
+          windowIso
         );
         if (!forecast) continue;
 
-        const anomalies = detectAnomalies({ ...forecast, slotIso: targetSlotIso });
+        const effectiveSlotIso = forecast.slotIso ?? targetSlotIso;
+        const anomalies = detectAnomalies({ ...forecast, slotIso: effectiveSlotIso });
         summary.anomaliesDetected += anomalies.length;
         if (!anomalies.length) continue;
 
@@ -364,7 +392,7 @@ Deno.serve(async (request) => {
 
         const toInsert = anomalies
           .filter((anomaly) => {
-            const key = buildAnomalyKey(location.device_id as string, location.id, targetSlotIso, anomaly.kind);
+            const key = buildAnomalyKey(location.device_id as string, location.id, effectiveSlotIso, anomaly.kind);
             if (existingKeys.has(key)) {
               summary.skippedDuplicates += 1;
               return false;
@@ -379,7 +407,7 @@ Deno.serve(async (request) => {
             data: {
               anomaly_kind: anomaly.kind,
               severity: anomaly.severity,
-              slot_iso: targetSlotIso,
+              slot_iso: effectiveSlotIso,
               location_id: location.id,
               location_name: locationName,
               source: 'marked-location',

@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   KeyboardAvoidingView,
   Modal,
@@ -15,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker, PROVIDER_GOOGLE, UrlTile, type MapPressEvent } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { EXPLORE_LAYERS, type ExploreLayerId } from '../../../lib/explore/mapLayers';
 import {
@@ -104,6 +104,8 @@ export default function Explore() {
   const [isSavingLocationFromMap, setIsSavingLocationFromMap] = useState(false);
   const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
   const [currentHour, setCurrentHour] = useState(() => new Date().getHours());
+  const [openedSearchMenuId, setOpenedSearchMenuId] = useState<string | null>(null);
+  const [openedHoldLocationId, setOpenedHoldLocationId] = useState<string | null>(null);
 
   const weatherCode = useWeatherStore((state) => state.data?.weatherCode);
 
@@ -392,8 +394,8 @@ export default function Explore() {
     const nextRegion = {
       latitude,
       longitude,
-      latitudeDelta: Math.max(0.12, mapRegion.latitudeDelta * 0.22),
-      longitudeDelta: Math.max(0.12, mapRegion.longitudeDelta * 0.22),
+      latitudeDelta: 0.04,
+      longitudeDelta: 0.04,
     };
 
     mapRef.current?.animateToRegion(nextRegion, 450);
@@ -519,21 +521,12 @@ export default function Explore() {
     }
   };
 
-  const confirmDeleteMarkedLocation = (location: MarkedLocation) => {
-    Alert.alert(
-      'Delete marked location?',
-      `Are you sure you want to delete "${location.locationName}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void handleDeleteMarkedLocation(location.id);
-          },
-        },
-      ]
-    );
+  const closeHoldForLocation = (locationId: string) => {
+    setOpenedHoldLocationId((previous) => (previous === locationId ? null : previous));
+  };
+
+  const openHoldForLocation = (locationId: string) => {
+    setOpenedHoldLocationId(locationId);
   };
 
   const mapHeight = useMemo(() => Math.round(Dimensions.get('window').height * 0.56), []);
@@ -635,27 +628,58 @@ export default function Explore() {
 
           {!isSearchingLocation && searchResults.length > 0 ? (
             <View className="mt-2 gap-2">
-              {searchResults.map((result) => (
-                <View
-                  key={result.id}
-                  className={`rounded-lg px-3 py-2 ${isDarkUi ? 'border border-white/25 bg-white/10' : 'border border-slate-300 bg-white/75'}`}>
-                  <Text className={`text-[11px] ${outsideMapTextClass}`} numberOfLines={2}>
-                    {result.displayName}
-                  </Text>
-                  <View className="mt-2 flex-row items-center justify-between">
+              {searchResults.map((result) => {
+                const isMenuOpen = openedSearchMenuId === result.id;
+
+                return (
+                  <View
+                    key={result.id}
+                    className={`relative rounded-lg px-3 py-2 ${isDarkUi ? 'border border-white/25 bg-white/10' : 'border border-slate-300 bg-white/75'}`}>
                     <Pressable
                       onPress={() => focusMapToLocation(result.latitude, result.longitude)}
-                      className="rounded-md border border-sky-300 bg-sky-100 px-2 py-1">
-                      <Text className="text-[11px] font-medium text-sky-700">View</Text>
+                      className="pr-10">
+                      <Text className={`text-[11px] ${outsideMapTextClass}`} numberOfLines={2}>
+                        {result.displayName}
+                      </Text>
                     </Pressable>
+
                     <Pressable
-                      onPress={() => handleAddMarkedLocation(result)}
-                      className="rounded-md border border-emerald-300 bg-emerald-100 px-2 py-1">
-                      <Text className="text-[11px] font-medium text-emerald-700">Mark</Text>
+                      onPress={() => setOpenedSearchMenuId((previous) => (previous === result.id ? null : result.id))}
+                      className="absolute right-2 top-2 rounded-md px-1 py-1.5">
+                      <Ionicons name="ellipsis-vertical" size={16} color={isDarkUi ? '#e2e8f0' : '#334155'} />
                     </Pressable>
+
+                    {isMenuOpen ? (
+                      <View
+                        className={`absolute right-2 top-10 z-20 w-28 overflow-hidden rounded-md border ${isDarkUi ? 'border-white/20 bg-slate-950' : 'border-slate-200 bg-white'}`}>
+                        <Pressable
+                          onPress={() => {
+                            setOpenedSearchMenuId(null);
+                            focusMapToLocation(result.latitude, result.longitude);
+                          }}
+                          className={`flex-row items-center gap-2 px-3 py-2 ${isDarkUi ? 'bg-white/5' : 'bg-transparent'}`}>
+                          <Ionicons name="eye-outline" size={14} color={isDarkUi ? '#bae6fd' : '#0369a1'} />
+                          <Text className={`text-[11px] font-medium ${isDarkUi ? 'text-sky-100' : 'text-sky-700'}`}>
+                            View
+                          </Text>
+                        </Pressable>
+                        <View className={`h-px ${isDarkUi ? 'bg-white/10' : 'bg-slate-200'}`} />
+                        <Pressable
+                          onPress={() => {
+                            setOpenedSearchMenuId(null);
+                            handleAddMarkedLocation(result);
+                          }}
+                          className={`flex-row items-center gap-2 px-3 py-2 ${isDarkUi ? 'bg-white/5' : 'bg-transparent'}`}>
+                          <Ionicons name="bookmark-outline" size={14} color={isDarkUi ? '#86efac' : '#047857'} />
+                          <Text className={`text-[11px] font-medium ${isDarkUi ? 'text-emerald-100' : 'text-emerald-700'}`}>
+                            Mark
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
           ) : null}
         </View>
@@ -729,20 +753,19 @@ export default function Explore() {
             intensity={30}
             tint={isDarkUi ? 'dark' : 'light'}
             className="absolute bottom-3 right-3 overflow-hidden rounded-xl border border-white/20">
-            <View className="px-3 py-2">
+            <View className="px-3 py-2.5">
               <Text className={`text-[11px] font-semibold ${outsideMapTextClass}`}>
                 {selectedLayer.label} Legend
               </Text>
-              <View className="mt-2 flex-row items-center gap-1">
-                {legendColors.map((color) => (
-                  <View
-                    key={color}
-                    style={{ backgroundColor: color }}
-                    className="h-2.5 w-6 rounded-sm"
-                  />
-                ))}
+              <View className={`mt-2 overflow-hidden rounded-full ${isDarkUi ? 'border border-white/20' : 'border border-slate-200'}`}>
+                <LinearGradient
+                  colors={legendColors as unknown as readonly [string, string, ...string[]]}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  className="h-3.5"
+                />
               </View>
-              <View className="mt-1 flex-row items-center justify-between">
+              <View className="mt-1.5 flex-row items-center justify-between">
                 <Text className={`text-[10px] ${outsideMapMutedTextClass}`}>
                   {layerRangeText.min} {layerRangeText.unit}
                 </Text>
@@ -759,6 +782,7 @@ export default function Explore() {
                 Missing tile source. Set `EXPO_PUBLIC_SUPABASE_URL` or fallback
                 `EXPO_PUBLIC_OPENWEATHER_TILE_API_KEY`.
               </Text>
+              
             </View>
           ) : null}
 
@@ -788,57 +812,69 @@ export default function Explore() {
             </Text>
           ) : (
             <View className="mt-2 gap-2">
-              {markedLocations.slice(0, 6).map((location) => (
-                <Pressable
-                  key={location.id}
-                  onPress={() => handleSelectLocation(location)}
-                  className={`rounded-lg px-3 py-2 ${
-                    selectedMarkedLocationId === location.id
-                      ? isDarkUi
-                        ? 'border border-sky-300 bg-sky-500/25'
-                        : 'border border-sky-400 bg-sky-100/85'
-                      : isDarkUi
-                        ? 'border border-white/25 bg-white/10'
-                        : 'border border-slate-300 bg-white/75'
-                  }`}>
-                  <View className="flex-row items-start justify-between gap-2">
-                    <Text className={`flex-1 text-sm ${outsideMapTextClass}`} numberOfLines={2}>
-                      {location.locationName}
-                    </Text>
+              {markedLocations.slice(0, 6).map((location) => {
+                return (
+                  <View key={location.id} className="relative overflow-hidden rounded-lg">
                     <Pressable
-                      onPress={(event) => {
-                        event.stopPropagation();
-                        confirmDeleteMarkedLocation(location);
+                      onPress={() => {
+                        if (openedHoldLocationId === location.id) {
+                          closeHoldForLocation(location.id);
+                          return;
+                        }
+                        handleSelectLocation(location);
                       }}
-                      className="flex-row items-center gap-1 rounded-md px-2 py-1">
-                      <Ionicons
-                        name="trash-outline"
-                        size={14}
-                        color={isDarkUi ? '#fda4af' : '#be123c'}
-                      />
+                      onLongPress={() => {
+                        openHoldForLocation(location.id);
+                      }}
+                      delayLongPress={250}
+                      className={`w-full rounded-lg px-3 py-2 ${
+                        selectedMarkedLocationId === location.id
+                          ? isDarkUi
+                            ? 'border border-sky-300 bg-sky-500/25'
+                            : 'border border-sky-400 bg-sky-100/85'
+                          : isDarkUi
+                            ? 'border border-white/25 bg-white/10'
+                            : 'border border-slate-300 bg-white/75'
+                      }`}>
+                      {openedHoldLocationId === location.id ? (
+                        <View className="absolute right-2 top-2 z-10">
+                          <Pressable
+                            onPress={() => {
+                              closeHoldForLocation(location.id);
+                              void handleDeleteMarkedLocation(location.id);
+                            }}
+                            className="rounded-md bg-rose-500 px-2 py-1">
+                            <Ionicons name="trash-outline" size={14} color="#ffffff" />
+                          </Pressable>
+                        </View>
+                      ) : null}
+
+                      <Text className={`text-sm ${outsideMapTextClass}`} numberOfLines={2}>
+                        {location.locationName}
+                      </Text>
+                      <Text className={`mt-1 text-[10px] ${outsideMapMutedTextClass}`}>
+                        {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+                      </Text>
+                      <View className="mt-2 flex-row items-center gap-2">
+                        <Ionicons
+                          name={markedLocationWeather[location.id]?.iconName ?? 'help-circle-outline'}
+                          size={16}
+                          color={markedLocationWeather[location.id]?.iconColor ?? '#64748b'}
+                        />
+                        <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
+                          Current Weather: {markedLocationWeather[location.id]?.label ?? 'Unknown'}
+                        </Text>
+                      </View>
+                      <Text className={`mt-1 text-[11px] ${outsideMapMutedTextClass}`}>
+                        Current Temp:{' '}
+                        {markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C ·
+                        Current Wind:{' '}
+                        {markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
+                      </Text>
                     </Pressable>
                   </View>
-                  <Text className={`mt-1 text-[10px] ${outsideMapMutedTextClass}`}>
-                    {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
-                  </Text>
-                  <View className="mt-2 flex-row items-center gap-2">
-                    <Ionicons
-                      name={markedLocationWeather[location.id]?.iconName ?? 'help-circle-outline'}
-                      size={16}
-                      color={markedLocationWeather[location.id]?.iconColor ?? '#64748b'}
-                    />
-                    <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
-                      Current Weather: {markedLocationWeather[location.id]?.label ?? 'Unknown'}
-                    </Text>
-                  </View>
-                  <Text className={`mt-1 text-[11px] ${outsideMapMutedTextClass}`}>
-                    Current Temp:{' '}
-                    {markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C ·
-                    Current Wind:{' '}
-                    {markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
-                  </Text>
-                </Pressable>
-              ))}
+                );
+              })}
             </View>
           )}
         </View>

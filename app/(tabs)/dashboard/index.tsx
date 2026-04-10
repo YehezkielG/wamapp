@@ -5,6 +5,9 @@ import DashboardSkeleton from '../../../components/skeleton_loading/Dashboard';
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import Forecast12Hours from '../../../components/dashboard/Forecast12Hours';
 import Forecast7Days from '../../../components/dashboard/Forecast7Days';
+import WeatherAlertEmergencyCard from '../../../components/dashboard/WeatherAlertEmergencyCard';
+import { supabase } from '../../../lib/supabaseClient';
+import { getCurrentDeviceId } from '../../../lib/explore/markedLocationsService';
 import { useWeatherStore, WEATHER_REFRESH_INTERVAL_MS } from '../../../lib/weather/weatherStore';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -12,6 +15,14 @@ type WeatherVisual = {
   label: string;
   iconName: keyof typeof Ionicons.glyphMap;
   iconColor: string;
+};
+
+type LatestNotification = {
+  id: string;
+  title: string;
+  message: string;
+  category: string;
+  created_at: string;
 };
 
 function weatherCodeToVisual(code?: number): WeatherVisual {
@@ -48,6 +59,7 @@ function celsiusToFahrenheit(valueInCelsius: number) {
 export default function Dashboard() {
   const [now, setNow] = useState(new Date());
   const [unit, setUnit] = useState<'C' | 'F'>('C');
+  const [latestNotification, setLatestNotification] = useState<LatestNotification | null>(null);
   const { data, isLoading, errorMessage } = useWeatherStore(
     useShallow((state) => ({
       data: state.data,
@@ -101,6 +113,50 @@ export default function Dashboard() {
       // noop if provider not available
     }
   }, [weatherCode, currentHour, setFromWeather]);
+
+  useEffect(() => {
+    const loadLatestNotification = async () => {
+      try {
+        const deviceId = await getCurrentDeviceId().catch(() => null);
+
+        if (deviceId) {
+          const { data: byDevice, error: byDeviceError } = await supabase
+            .from('notifications')
+            .select('id,title,message,category,created_at')
+            .eq('device_id', deviceId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (!byDeviceError && byDevice?.length) {
+            setLatestNotification((byDevice[0] as LatestNotification) ?? null);
+            return;
+          }
+        }
+
+        const { data: latestAny, error: latestAnyError } = await supabase
+          .from('notifications')
+          .select('id,title,message,category,created_at')
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (latestAnyError) {
+          throw latestAnyError;
+        }
+
+        setLatestNotification((latestAny?.[0] as LatestNotification) ?? null);
+      } catch {
+        setLatestNotification(null);
+      }
+    };
+
+    void loadLatestNotification();
+
+    const timerId = setInterval(() => {
+      void loadLatestNotification();
+    }, 30000);
+
+    return () => clearInterval(timerId);
+  }, []);
 
   const displayedTime = useMemo(
     () =>
@@ -191,7 +247,19 @@ export default function Dashboard() {
   return (
     <ScrollView
       className="flex-1 bg-transparent"
-      contentContainerClassName="items-center px-6 pt-14 pb-12">
+      contentContainerClassName="items-center px-6 pt-5 pb-12">
+      {latestNotification ? (
+        <View className="mb-5 w-full">
+          <WeatherAlertEmergencyCard
+            alert={{
+              title: latestNotification.title,
+              message: latestNotification.message,
+              createdAt: latestNotification.created_at,
+            }}
+            isDarkUi={isDarkUi}
+          />
+        </View>
+      ) : null}
       <Text className={`mb-3 text-center text-3xl font-bold ${textColor.title}`}>
         Current Weather
       </Text>

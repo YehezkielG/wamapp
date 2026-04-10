@@ -7,29 +7,6 @@ Folder ini berisi kode function untuk memanggil provider cuaca dari server-side.
 - `openweather-explore` → file: `openweather-explore/index.ts`
 - `weather-anomaly-notifier` → file: `weather-anomaly-notifier/index.ts`
 - `marked-location-anomaly-notifier` → file: `marked-location-anomaly-notifier/index.ts`
-- `weather-anomaly-dummy-notifier` → file: `weather-anomaly-dummy-notifier/index.ts`
-
-## Weather anomaly dummy notifier (random)
-
-`weather-anomaly-dummy-notifier` melakukan:
-
-- Ambil daftar `devices`.
-- Generate data anomaly cuaca acak per device (dummy data).
-- Insert ke tabel `notifications` dengan `category = weather-anomaly-dummy`.
-- Kirim push ke Expo jika `devices.push_token` valid.
-
-### Trigger via cron (setiap 15 menit)
-
-Gunakan SQL di:
-
-- `scripts/sql/cron_weather_anomaly_dummy_notifier.sql`
-
-Ganti placeholder:
-
-- `<PROJECT_REF>`
-- `<SUPABASE_SERVICE_ROLE_KEY>`
-
-Lalu jalankan di Supabase SQL Editor.
 
 ## Marked location anomaly notifier (5 jam ke depan)
 
@@ -145,7 +122,6 @@ Setiap sample mengandung:
 supabase functions deploy openweather-explore --project-ref <YOUR_PROJECT_REF>
 supabase functions deploy weather-anomaly-notifier --project-ref <YOUR_PROJECT_REF>
 supabase functions deploy marked-location-anomaly-notifier --project-ref <YOUR_PROJECT_REF>
-supabase functions deploy weather-anomaly-dummy-notifier --project-ref <YOUR_PROJECT_REF>
 ```
 
 ## Set secret

@@ -84,6 +84,9 @@ export default function Chat() {
         <Text className="text-xl font-bold" style={{ color: chatTheme.titleColor }}>
           WAMchat
         </Text>
+        <Text className="mt-1 text-sm" style={{ color: chatTheme.placeholder }}>
+          Ask me anything about the weather or get personalized recommendations!
+        </Text>
       </View>
 
       <KeyboardAvoidingView
