@@ -4,14 +4,12 @@
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
--- Optional: remove old schedule if exists
 select cron.unschedule('weather-anomaly-every-minute');
 
--- Create minute-based schedule
 select
   cron.schedule(
-    'weather-anomaly-every-minute',
-    '* * * * *',
+    'weather-anomaly-every-15-minutes',
+    '*/15 * * * *',
     $$
     select
       net.http_post(
@@ -25,5 +23,5 @@ select
     $$
   );
 
--- Check active schedules
 select jobid, jobname, schedule, active from cron.job where jobname = 'weather-anomaly-every-minute';
+select jobid, jobname, schedule, active from cron.job where jobname = 'weather-anomaly-every-15-minutes';
