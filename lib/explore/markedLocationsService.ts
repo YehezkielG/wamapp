@@ -24,8 +24,7 @@ type DeviceLocationRow = {
   longitude: number | null;
 };
 
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function hash32(input: string, seed: number) {
   let hash = seed >>> 0;
@@ -108,10 +107,8 @@ async function resolveHardwareDeviceId() {
     const brand = Device.brand ?? 'unknown-brand';
     const model = Device.modelName ?? 'unknown-model';
     const osVersion = Device.osVersion ?? 'unknown-os';
-    
-    return normalizeAsUuid(
-      `android:fallback:${brand}:${model}:${osVersion}`.replace(/\s+/g, '-')
-    );
+
+    return normalizeAsUuid(`android:fallback:${brand}:${model}:${osVersion}`.replace(/\s+/g, '-'));
   }
 
   if (Platform.OS === 'ios') {
@@ -234,19 +231,39 @@ export async function saveDevicePushToken(pushToken: string) {
     return true;
   }
 
-  const { error } = await supabase
-    .from('devices')
-    .upsert(
-      {
-        id: deviceId,
-        push_token: pushToken,
-        last_active: new Date().toISOString(),
-      },
-      { onConflict: 'id' }
-    );
+  const { error } = await supabase.from('devices').upsert(
+    {
+      id: deviceId,
+      push_token: pushToken,
+      last_active: new Date().toISOString(),
+    },
+    { onConflict: 'id' }
+  );
 
   if (error) {
     console.warn('Failed to save push token:', error.message);
+    return false;
+  }
+
+  cachedDeviceId = deviceId;
+  return true;
+}
+
+export async function clearDevicePushToken() {
+  const deviceId = await resolveHardwareDeviceId();
+  if (!deviceId) return false;
+
+  const { error } = await supabase.from('devices').upsert(
+    {
+      id: deviceId,
+      push_token: null,
+      last_active: new Date().toISOString(),
+    },
+    { onConflict: 'id' }
+  );
+
+  if (error) {
+    console.warn('Failed to clear push token:', error.message);
     return false;
   }
 
@@ -266,7 +283,12 @@ function haversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2:
   return R * c;
 }
 
-export async function updateDeviceLocationIfMoved(deviceId: string | null, latitude: number, longitude: number, minMeters = 500) {
+export async function updateDeviceLocationIfMoved(
+  deviceId: string | null,
+  latitude: number,
+  longitude: number,
+  minMeters = 500
+) {
   if (!deviceId) return false;
 
   const { data: deviceRow, error: fetchErr } = await supabase
@@ -307,7 +329,11 @@ export async function updateDeviceLocationIfMoved(deviceId: string | null, latit
   return true;
 }
 
-export async function updateDeviceLocationFromCoords(latitude: number, longitude: number, minMeters = 500) {
+export async function updateDeviceLocationFromCoords(
+  latitude: number,
+  longitude: number,
+  minMeters = 500
+) {
   try {
     const deviceId = await getCurrentDeviceId();
     if (!deviceId) {
