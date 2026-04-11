@@ -7,7 +7,6 @@ Folder ini berisi kode function untuk memanggil provider cuaca dari server-side.
 - `openweather-explore` → file: `openweather-explore/index.ts`
 - `weather-anomaly-notifier` → file: `weather-anomaly-notifier/index.ts`
 - `marked-location-anomaly-notifier` → file: `marked-location-anomaly-notifier/index.ts`
-- `latest-device-notification` → file: `latest-device-notification/index.ts`
 
 ## Marked location anomaly notifier (5 jam ke depan)
 
@@ -124,6 +123,20 @@ supabase functions deploy openweather-explore --project-ref <YOUR_PROJECT_REF>
 supabase functions deploy weather-anomaly-notifier --project-ref <YOUR_PROJECT_REF>
 supabase functions deploy marked-location-anomaly-notifier --project-ref <YOUR_PROJECT_REF>
 ```
+
+## Notifications RLS
+
+Untuk tabel `notifications`, gunakan policy di:
+
+- `scripts/sql/notifications_rls_policies.sql`
+
+Policy ini membatasi akses berdasarkan `device_id` yang dibaca dari:
+
+- JWT claim `device_id` saja
+
+Tab `history` sekarang membaca tabel `notifications` langsung dari client, dan token harus sudah membawa claim `device_id`.
+
+Kalau token tidak punya claim `device_id`, akses akan ditolak oleh RLS.
 
 ## Set secret
 

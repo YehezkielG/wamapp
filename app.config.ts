@@ -72,4 +72,5 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       projectId: process.env.EXPO_PUBLIC_ID_PROJECT,
     },
   },
+  jsEngine: 'hermes',
 });

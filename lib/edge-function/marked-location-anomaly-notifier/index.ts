@@ -5,7 +5,8 @@ const FUNCTION_NAME = 'marked-location-anomaly-notifier';
 const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const OPEN_METEO_CALL_INTERVAL_MIN = 15;
-const FORECAST_WINDOW_MINUTES = 60 * 5;
+const MAX_FORECAST_WINDOW_MINUTES = 60 * 5;
+const RECENT_DUPLICATE_WINDOW_MINUTES = 15;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -47,6 +48,19 @@ type Anomaly = {
   title: string;
   message: string;
   severity: 'info' | 'warning' | 'critical';
+};
+
+type ForecastPoint = {
+  slotIso: string;
+  precipitationMm: number;
+  windKmh: number;
+  weatherCode: number;
+  tempC: number;
+};
+
+type AnomalyCandidate = {
+  anomaly: Anomaly;
+  forecast: ForecastPoint;
 };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -106,12 +120,12 @@ function toSlotIso(dateLike: string | Date) {
 function getForecastWindowIso() {
   const now = new Date();
   const start = floorToQuarterHourUtc(now);
-  const end = new Date(start.getTime() + FORECAST_WINDOW_MINUTES * 60 * 1000);
+  const end = new Date(start.getTime() + MAX_FORECAST_WINDOW_MINUTES * 60 * 1000);
 
   return {
     startIso: toUtcMinuteIso(start),
     endIso: toUtcMinuteIso(end),
-    targetSlotIso: toSlotIso(end),
+    windowEndIso: toSlotIso(end),
   };
 }
 
@@ -187,11 +201,11 @@ function detectAnomalies(input: {
   return anomalies;
 }
 
-async function fetchForecastInWindow(
+async function fetchForecastPointsInWindow(
   latitude: number,
   longitude: number,
   window: { startIso: string; endIso: string }
-) {
+): Promise<ForecastPoint[]> {
   const url = new URL(OPEN_METEO_FORECAST_URL);
   url.searchParams.set('latitude', String(latitude));
   url.searchParams.set('longitude', String(longitude));
@@ -210,20 +224,33 @@ async function fetchForecastInWindow(
   );
 
   const times = payload.minutely_15?.time ?? [];
-  if (!times.length) return null;
+  if (!times.length) return [];
 
-  const targetIdx = times.findIndex((item) => item === window.endIso || item.startsWith(window.endIso));
-  const idx = targetIdx >= 0 ? targetIdx : times.length - 1;
-
-  if (idx < 0) return null;
-
-  return {
-    slotIso: toSlotIso(times[idx]),
+  return times.map((slotTime, idx) => ({
+    slotIso: toSlotIso(slotTime),
     precipitationMm: payload.minutely_15?.precipitation?.[idx] ?? 0,
     windKmh: payload.minutely_15?.windspeed_10m?.[idx] ?? 0,
     weatherCode: payload.minutely_15?.weathercode?.[idx] ?? 0,
     tempC: payload.minutely_15?.temperature_2m?.[idx] ?? 0,
-  };
+  }));
+}
+
+function pickEarliestAnomalyCandidates(points: ForecastPoint[]) {
+  const earliestByKind = new Map<Anomaly['kind'], AnomalyCandidate>();
+
+  for (const point of points) {
+    const anomaliesAtSlot = detectAnomalies(point);
+    for (const anomaly of anomaliesAtSlot) {
+      if (!earliestByKind.has(anomaly.kind)) {
+        earliestByKind.set(anomaly.kind, {
+          anomaly,
+          forecast: point,
+        });
+      }
+    }
+  }
+
+  return Array.from(earliestByKind.values());
 }
 
 function buildAnomalyKey(deviceId: string, locationId: string, slotIso: string, kind: string) {
@@ -308,7 +335,6 @@ Deno.serve(async (request) => {
     }
 
     const windowIso = getForecastWindowIso();
-    const targetSlotIso = windowIso.targetSlotIso;
     const headers = {
       apikey: serviceRoleKey,
       Authorization: `Bearer ${serviceRoleKey}`,
@@ -323,7 +349,7 @@ Deno.serve(async (request) => {
 
     const summary = {
       function: FUNCTION_NAME,
-      targetSlotIso,
+      forecastWindowEndIso: windowIso.windowEndIso,
       locationsScanned: markedLocations.length,
       anomaliesDetected: 0,
       notificationsInserted: 0,
@@ -331,6 +357,7 @@ Deno.serve(async (request) => {
       pushSent: 0,
       pushFailed: 0,
       skippedDuplicates: 0,
+      skippedRecentDuplicates: 0,
       failures: 0,
       failedLocationIds: [] as string[],
     };
@@ -353,22 +380,24 @@ Deno.serve(async (request) => {
     const tokenByDeviceId = new Map(deviceRows.map((row) => [row.id, row.push_token]));
 
     const notifSince = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    const recentDuplicateSince = new Date(
+      Date.now() - RECENT_DUPLICATE_WINDOW_MINUTES * 60 * 1000
+    ).toISOString();
 
     for (const location of markedLocations) {
       try {
         if (!location.device_id || location.latitude === null || location.longitude === null) continue;
 
-        const forecast = await fetchForecastInWindow(
+        const forecastPoints = await fetchForecastPointsInWindow(
           location.latitude,
           location.longitude,
           windowIso
         );
-        if (!forecast) continue;
+        if (!forecastPoints.length) continue;
 
-        const effectiveSlotIso = forecast.slotIso ?? targetSlotIso;
-        const anomalies = detectAnomalies({ ...forecast, slotIso: effectiveSlotIso });
-        summary.anomaliesDetected += anomalies.length;
-        if (!anomalies.length) continue;
+        const anomalyCandidates = pickEarliestAnomalyCandidates(forecastPoints);
+        summary.anomaliesDetected += anomalyCandidates.length;
+        if (!anomalyCandidates.length) continue;
 
         const existing = await fetchJsonOrThrow<NotificationRow[]>(
           `${supabaseUrl}/rest/v1/notifications?select=id,data,created_at&device_id=eq.${location.device_id}&category=eq.weather-anomaly-marked-location&created_at=gte.${encodeURIComponent(notifSince)}&order=created_at.desc&limit=200`,
@@ -388,30 +417,53 @@ Deno.serve(async (request) => {
             .filter(Boolean) as string[]
         );
 
+        const recentKindsForLocation = new Set(
+          existing
+            .filter((item) => item.created_at >= recentDuplicateSince)
+            .map((item) => {
+              const kind = typeof item.data?.anomaly_kind === 'string' ? item.data.anomaly_kind : null;
+              const locationId = typeof item.data?.location_id === 'string' ? item.data.location_id : null;
+              if (!kind || !locationId || locationId !== location.id) return null;
+              return kind;
+            })
+            .filter(Boolean) as string[]
+        );
+
         const locationName = (location.location_name ?? 'Saved Location').trim() || 'Saved Location';
 
-        const toInsert = anomalies
-          .filter((anomaly) => {
-            const key = buildAnomalyKey(location.device_id as string, location.id, effectiveSlotIso, anomaly.kind);
+        const toInsert = anomalyCandidates
+          .filter((candidate) => {
+            const key = buildAnomalyKey(
+              location.device_id as string,
+              location.id,
+              candidate.forecast.slotIso,
+              candidate.anomaly.kind
+            );
             if (existingKeys.has(key)) {
               summary.skippedDuplicates += 1;
               return false;
             }
+
+            if (recentKindsForLocation.has(candidate.anomaly.kind)) {
+              summary.skippedRecentDuplicates += 1;
+              return false;
+            }
+
             return true;
           })
-          .map((anomaly) => ({
+          .map((candidate) => ({
             device_id: location.device_id,
-            title: `${locationName}: ${anomaly.title}`,
-            message: anomaly.message,
+            title: `${locationName}: ${candidate.anomaly.title}`,
+            message: candidate.anomaly.message,
             category: 'weather-anomaly-marked-location',
             data: {
-              anomaly_kind: anomaly.kind,
-              severity: anomaly.severity,
-              slot_iso: effectiveSlotIso,
+              anomaly_kind: candidate.anomaly.kind,
+              severity: candidate.anomaly.severity,
+              slot_iso: candidate.forecast.slotIso,
               location_id: location.id,
               location_name: locationName,
               source: 'marked-location',
-              forecast,
+              forecast: candidate.forecast,
             },
             is_read: false,
           }));

@@ -17,6 +17,7 @@ import {
   sendMessageToRAGBackend,
   type Message,
 } from '../../../lib/chat/_chatUtils';
+import ChatSkeleton from '../../../components/skeleton_loading/Chat';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 
 const INPUT_BOTTOM_GAP = 8;
@@ -94,59 +95,60 @@ export default function Chat() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : INPUT_BOTTOM_GAP}
         className="flex-1">
         {/* Area Daftar Pesan */}
-        <FlatList
+        {isLoading && messages.length === 0 ? (
+          <ChatSkeleton />
+        ) : (
+          <FlatList
           ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
           className="flex-1 px-3"
           contentContainerStyle={{ paddingTop: 10, paddingBottom: 20 }}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-          ListFooterComponent={
-            isLoading ? (
-              <View className="pt-2">
-                <Text className="mb-2 text-xs" style={{ color: chatTheme.placeholder }}>
-                  generating a response...
-                </Text>
+          ListFooterComponent={isLoading && messages.length > 0 ? (
+            <View className="pt-2">
+              <Text className="mb-2 text-xs" style={{ color: chatTheme.placeholder }}>
+                generating a response...
+              </Text>
 
+              <View
+                className="max-w-[82%] self-start rounded-2xl rounded-tl-sm p-4"
+                style={{ backgroundColor: chatTheme.botBubble }}>
                 <View
-                  className="max-w-[82%] self-start rounded-2xl rounded-tl-sm p-4"
-                  style={{ backgroundColor: chatTheme.botBubble }}>
-                  <View
-                    className="mb-3 h-4 rounded-full"
-                    style={{
-                      width: '92%',
-                      backgroundColor: chatTheme.inputBackground,
-                      opacity: 0.9,
-                    }}
-                  />
-                  <View
-                    className="mb-3 h-4 rounded-full"
-                    style={{
-                      width: '85%',
-                      backgroundColor: chatTheme.inputBackground,
-                      opacity: 0.85,
-                    }}
-                  />
-                  <View
-                    className="mb-3 h-4 rounded-full"
-                    style={{
-                      width: '76%',
-                      backgroundColor: chatTheme.inputBackground,
-                      opacity: 0.8,
-                    }}
-                  />
-                  <View
-                    className="h-4 rounded-full"
-                    style={{
-                      width: '54%',
-                      backgroundColor: chatTheme.inputBackground,
-                      opacity: 0.75,
-                    }}
-                  />
-                </View>
+                  className="mb-3 h-4 rounded-full"
+                  style={{
+                    width: '92%',
+                    backgroundColor: chatTheme.inputBackground,
+                    opacity: 0.9,
+                  }}
+                />
+                <View
+                  className="mb-3 h-4 rounded-full"
+                  style={{
+                    width: '85%',
+                    backgroundColor: chatTheme.inputBackground,
+                    opacity: 0.85,
+                  }}
+                />
+                <View
+                  className="mb-3 h-4 rounded-full"
+                  style={{
+                    width: '76%',
+                    backgroundColor: chatTheme.inputBackground,
+                    opacity: 0.8,
+                  }}
+                />
+                <View
+                  className="h-4 rounded-full"
+                  style={{
+                    width: '54%',
+                    backgroundColor: chatTheme.inputBackground,
+                    opacity: 0.75,
+                  }}
+                />
               </View>
-            ) : null
-          }
+            </View>
+          ) : null}
           renderItem={({ item }) => (
             <View
               className={`my-1 max-w-[80%] rounded-2xl p-3 ${item.sender === 'user' ? 'self-end rounded-tr-sm' : 'self-start rounded-tl-sm'}`}
@@ -161,6 +163,7 @@ export default function Chat() {
             </View>
           )}
         />
+        )}
 
         {/* Area Input Pesan */}
         <View className="p-3">

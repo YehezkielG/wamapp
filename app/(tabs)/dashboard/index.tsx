@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import DashboardSkeleton from '../../../components/skeleton_loading/Dashboard';
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import Forecast12Hours from '../../../components/dashboard/Forecast12Hours';
+import Forecast12HoursSkeleton from '../../../components/skeleton_loading/Forecast12Hours';
 import Forecast7Days from '../../../components/dashboard/Forecast7Days';
 import WeatherAlertEmergencyCard from '../../../components/dashboard/WeatherAlertEmergencyCard';
-import { supabase } from '../../../lib/supabaseClient';
-import { getCurrentDeviceId } from '../../../lib/explore/markedLocationsService';
+import { useNotificationCenterStore } from '../../../lib/notifications/notificationCenterStore';
 import { useWeatherStore, WEATHER_REFRESH_INTERVAL_MS } from '../../../lib/weather/weatherStore';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -59,9 +58,7 @@ function celsiusToFahrenheit(valueInCelsius: number) {
 export default function Dashboard() {
   const [now, setNow] = useState(new Date());
   const [unit, setUnit] = useState<'C' | 'F'>('C');
-  const [latestNotification, setLatestNotification] = useState<LatestNotification | null>(null);
-  const [dismissedNotificationId, setDismissedNotificationId] = useState<string | null>(null);
-  const [notificationRefreshTick, setNotificationRefreshTick] = useState(0);
+  const [activeNotification, setActiveNotification] = useState<LatestNotification | null>(null);
   const { data, isLoading, errorMessage } = useWeatherStore(
     useShallow((state) => ({
       data: state.data,
@@ -69,6 +66,9 @@ export default function Dashboard() {
       errorMessage: state.errorMessage,
     }))
   );
+  const notifications = useNotificationCenterStore((state) => state.notifications);
+  const loadNotifications = useNotificationCenterStore((state) => state.loadNotifications);
+  const markNotificationRead = useNotificationCenterStore((state) => state.markNotificationRead);
 
   const locationName = data?.locationName ?? 'Detecting location...';
   const temperatureC = data?.temperatureC ?? null;
@@ -117,34 +117,14 @@ export default function Dashboard() {
   }, [weatherCode, currentHour, setFromWeather]);
 
   useEffect(() => {
-    const loadLatestNotification = async () => {
-      try {
-        const deviceId = await getCurrentDeviceId().catch(() => null);
-        const { data, error } = await supabase.functions.invoke<{ notification: LatestNotification | null }>(
-          'latest-device-notification',
-          {
-            body: { deviceId },
-          }
-        );
-
-        if (error) {
-          throw error;
-        }
-
-        setLatestNotification(data?.notification ?? null);
-      } catch {
-        setLatestNotification(null);
-      }
-    };
-
-    void loadLatestNotification();
+    void loadNotifications();
 
     const timerId = setInterval(() => {
-      void loadLatestNotification();
+      void loadNotifications();
     }, 30000);
 
     return () => clearInterval(timerId);
-  }, [notificationRefreshTick]);
+  }, [loadNotifications]);
 
   const displayedTime = useMemo(
     () =>
@@ -228,40 +208,35 @@ export default function Dashboard() {
     [details.humidity, details.windSpeed, details.uvIndex, displayedDewPoint]
   );
 
-  if (isLoading && !data) {
-    return <DashboardSkeleton />;
-  }
+  const visibleNotification = useMemo(() => {
+    if (activeNotification) return activeNotification;
 
-  const visibleNotification =
-    latestNotification &&
-    latestNotification.id !== dismissedNotificationId &&
-    Date.now() - new Date(latestNotification.created_at).getTime() < 5 * 60 * 60 * 1000
-      ? latestNotification
-      : null;
+    const cutoff = Date.now() - 5 * 60 * 60 * 1000;
+    const latestUnread = notifications
+      .filter((item) => !item.is_read)
+      .filter((item) => new Date(item.created_at).getTime() >= cutoff)
+      .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
+
+    return latestUnread ?? null;
+  }, [activeNotification, notifications]);
+
+  useEffect(() => {
+    if (!visibleNotification) return;
+
+    void markNotificationRead(visibleNotification.id);
+    setActiveNotification(visibleNotification);
+  }, [markNotificationRead, visibleNotification]);
 
   const handleDismissNotification = async () => {
     if (!visibleNotification) return;
 
-    setDismissedNotificationId(visibleNotification.id);
-
-    try {
-      await supabase.functions.invoke('latest-device-notification', {
-        body: {
-          action: 'mark-read',
-          notificationId: visibleNotification.id,
-        },
-      });
-    } catch {
-      // Keep dismissed locally; next refresh may re-evaluate from server.
-    }
-
-    setNotificationRefreshTick((previous) => previous + 1);
+    setActiveNotification(null);
   };
 
   return (
     <ScrollView
       className="flex-1 bg-transparent"
-      contentContainerClassName="items-center px-6 pt-5 pb-12">
+      contentContainerClassName="items-center px-6 pt-5 pb-15">
       {visibleNotification ? (
         <View className="mb-5 w-full">
           <WeatherAlertEmergencyCard
@@ -327,7 +302,9 @@ export default function Dashboard() {
         ))}
       </View>
 
-      {forecastHours.length ? (
+      {isLoading && forecastHours.length === 0 ? (
+        <Forecast12HoursSkeleton />
+      ) : forecastHours.length ? (
         <Forecast12Hours items={forecastHours} unit={unit} isDarkUi={isDarkUi} />
       ) : null}
 

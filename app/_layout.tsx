@@ -36,6 +36,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 });
 
 function LayoutInner() {
+  console.log('[dbg] Render LayoutInner');
   const { colors } = useWeatherBackground();
   const foregroundWatcherRef = useRef<Location.LocationSubscription | null>(null);
   const hasSavedInitialLocationRef = useRef(false);
@@ -246,6 +247,7 @@ function LayoutInner() {
 }
 
 export default function Layout() {
+  console.log('[dbg] Render Layout');
   usePushNotifications();
   return (
     <WeatherBackgroundProvider>

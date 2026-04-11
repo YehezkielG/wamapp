@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 import { useNotificationSettingsStore } from '../../../lib/notifications/notificationSettingsStore';
+import { useNotificationCenterStore } from '../../../lib/notifications/notificationCenterStore';
 
 export default function Settings() {
   const [currentHour, setCurrentHour] = useState(() => new Date().getHours());
@@ -11,6 +12,7 @@ export default function Settings() {
   const notificationBusy = useNotificationSettingsStore((state) => state.isBusy);
   const setNotificationsEnabled = useNotificationSettingsStore((state) => state.setEnabledFromUi);
   const refreshOsPermission = useNotificationSettingsStore((state) => state.refreshOsPermission);
+  const clearNotifications = useNotificationCenterStore((state) => state.clearNotifications);
 
   useEffect(() => {
     const timerId = setInterval(() => {
@@ -55,8 +57,29 @@ export default function Settings() {
   const menuItems = [
     { id: 'appearance', label: 'Appearance', icon: 'color-palette-outline' as const },
     { id: 'notifications', label: 'Notifications', icon: 'notifications-outline' as const },
+    { id: 'clearNotifications', label: 'Clear Notifications', icon: 'trash-outline' as const },
     { id: 'about', label: 'About App', icon: 'information-circle-outline' as const },
   ];
+
+  const handleMenuPress = (itemId: string) => {
+    if (itemId === 'notifications') {
+      void setNotificationsEnabled(!notificationsEnabled);
+      return;
+    }
+
+    if (itemId === 'clearNotifications') {
+      Alert.alert('Clear notifications?', 'Semua notifikasi akan dihapus dari perangkat ini.', [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            void clearNotifications();
+          },
+        },
+      ]);
+    }
+  };
 
   return (
     <View className="flex-1 px-4 pt-8">
@@ -72,14 +95,12 @@ export default function Settings() {
             className={`flex-row items-center justify-between rounded-xl px-3 py-3 ${
               index !== menuItems.length - 1 ? 'mb-2' : ''
             } ${isDarkUi ? 'bg-white/10' : 'bg-white/75'} ${
-              item.id === 'notifications' && notificationBusy ? 'opacity-60' : ''
+              (item.id === 'notifications' && notificationBusy) || item.id === 'clearNotifications'
+                ? 'opacity-60'
+                : ''
             }`}
             disabled={item.id === 'notifications' && notificationBusy}
-            onPress={
-              item.id === 'notifications'
-                ? () => void setNotificationsEnabled(!notificationsEnabled)
-                : undefined
-            }>
+            onPress={() => handleMenuPress(item.id)}>
             <View className="flex-row items-center gap-2">
               <Ionicons
                 name={
@@ -87,6 +108,8 @@ export default function Settings() {
                     ? notificationsEnabled
                       ? 'notifications-outline'
                       : 'notifications-off-outline'
+                    : item.id === 'clearNotifications'
+                      ? 'trash-outline'
                     : item.icon
                 }
                 size={18}
@@ -110,6 +133,8 @@ export default function Settings() {
                   />
                 </View>
               </View>
+            ) : item.id === 'clearNotifications' ? (
+              <Text className={`text-xs font-semibold ${mutedClass}`}>Tap to clear</Text>
             ) : (
               <Ionicons name="chevron-forward" size={16} color={isDarkUi ? '#cbd5e1' : '#64748b'} />
             )}
