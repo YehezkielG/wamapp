@@ -112,7 +112,7 @@ export default function Chat() {
               </Text>
 
               <View
-                className="max-w-[82%] self-start rounded-2xl rounded-tl-sm p-4"
+                className="min-w-[82%] self-start rounded-2xl rounded-tl-sm p-4"
                 style={{ backgroundColor: chatTheme.botBubble }}>
                 <View
                   className="mb-3 h-4 rounded-full"

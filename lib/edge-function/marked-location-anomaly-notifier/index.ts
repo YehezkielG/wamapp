@@ -46,7 +46,7 @@ type ForecastPayload = {
 type Anomaly = {
   kind: 'rain' | 'wind' | 'thunderstorm' | 'heat' | 'cold';
   title: string;
-  message: string;
+  message: string; 
   severity: 'info' | 'warning' | 'critical';
 };
 
