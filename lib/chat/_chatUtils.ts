@@ -1,6 +1,7 @@
 import type { ColorValue } from 'react-native';
-import { useWeatherStore, } from '../weather/weatherStore';
-import { getCurrentDeviceId } from '../explore/markedLocationsService';
+import { Platform } from 'react-native';
+import * as Application from 'expo-application';
+import { useWeatherStore } from '../weather/weatherStore';
 
 export type Message = {
   id: string;
@@ -50,8 +51,6 @@ function isDarkHex(hex: string): boolean {
 }
 
 export function getChatThemeFromBackgroundColors(colors: ColorValue[]): ChatTheme {
-  // Single-color theme: pick one existing color from WeatherBackgroundContext output.
-  // Prefer the 2nd gradient stop (often the more saturated "accent"); fallback to the 1st.
   const base = toColorString(colors?.[1]) ?? toColorString(colors?.[0]) ?? '#93c5fd';
 
   const dark = base.startsWith('#') ? isDarkHex(base) : false;
@@ -73,13 +72,13 @@ export function getChatThemeFromBackgroundColors(colors: ColorValue[]): ChatThem
   };
 }
 
-// ... (kode sebelumnya di _chatUtils.ts tetap dipertahankan) ...
-
 function buildWeatherPrompt(weather: any | null): string {
   if (!weather) return 'No live weather data available for this user.';
 
   const parts: string[] = [];
-  parts.push('You are being provided with the user\'s current local weather conditions. Treat the following as factual, real-time observations for the user\'s location. Use this data to answer questions, give suggestions, or produce content that assumes the user\'s present weather. Do NOT invent or change these values.');
+  parts.push(
+    "You are being provided with the user's current local weather conditions. Treat the following as factual, real-time observations for the user's location. Use this data to answer questions, give suggestions, or produce content that assumes the user's present weather. Do NOT invent or change these values."
+  );
   parts.push(`Location: ${weather.locationName ?? 'unknown'}`);
   parts.push(`Current temperature: ${weather.temperatureC ?? 'unknown'} °C`);
   parts.push(`Weather code: ${weather.weatherCode ?? 'unknown'}`);
@@ -94,21 +93,46 @@ function buildWeatherPrompt(weather: any | null): string {
   if (Array.isArray(weather.forecastHours) && weather.forecastHours.length) {
     parts.push('Forecast (next hours):');
     for (const h of weather.forecastHours.slice(0, 6)) {
-      parts.push(`- ${h.time ?? 'unknown time'} : ${h.temperatureC ?? '??'}°C (code ${h.weatherCode ?? '??'})`);
+      parts.push(
+        `- ${h.time ?? 'unknown time'} : ${h.temperatureC ?? '??'}°C (code ${h.weatherCode ?? '??'})`
+      );
     }
   }
 
-  parts.push('Always assume the user is physically at this location now unless the user explicitly states otherwise. When giving advice (safety, clothing, travel, outdoor plans), base recommendations on these current conditions.');
+  parts.push(
+    'Always assume the user is physically at this location now unless the user explicitly states otherwise. When giving advice (safety, clothing, travel, outdoor plans), base recommendations on these current conditions.'
+  );
 
   return parts.join('\n');
 }
 
-const LANGUAGE_ENFORCE_PROMPT = `Important: Always reply in the same language as the user's message. Detect the language of the user's input and respond using that language. If the user's message is in Indonesian, reply in Indonesian; if in English, reply in English; if in another language, reply in that language. Ignore the language used in any external documents or RAG data — the user's message language has priority. Keep answers concise, natural, and appropriate for a general audience.`;
+// Fungsi pembantu untuk mendapatkan Device ID
+async function getUniqueDeviceId(): Promise<string> {
+  try {
+    if (Platform.OS === 'android') {
+      const maybeAndroidId =
+        typeof (Application as any).getAndroidId === 'function'
+          ? (Application as any).getAndroidId()
+          : null;
+      return (
+        (typeof maybeAndroidId === 'string' && maybeAndroidId.length > 0 ? maybeAndroidId : null) ??
+        'unknown_android'
+      );
+    } else if (Platform.OS === 'ios') {
+      const iosId = await Application.getIosIdForVendorAsync();
+      return iosId || 'unknown_ios';
+    }
+  } catch (error) {
+    console.warn('Gagal mendapatkan Device ID:', error);
+  }
+  return 'unknown_device';
+}
 
 export async function sendMessageToRAGBackend(message: string): Promise<string> {
   const API_URL = 'http://10.45.61.30:8000/api/chat';
   // const API_URL = 'https://wamapp-api-chatbot-production.up.railway.app/api/chat'
-  // Collect current weather state from Zustand store (if available)
+
+  // Collect current weather state from Zustand store
   const weatherState = useWeatherStore.getState().data;
 
   const weatherPayload = weatherState
@@ -118,26 +142,14 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
         weatherCode: weatherState.weatherCode ?? null,
         currentTime: new Date().toISOString(),
         details: weatherState.details ?? null,
-        // include a compact forecast summary if present (first few hours)
-        // forecastHours: Array.isArray(weatherState.forecastHours)
-        //   ? weatherState.forecastHours.slice(0, 6).map((h: any) => ({ time: h.time, temperatureC: h.temperatureC, weatherCode: h.weatherCode }))
-        //   : null,
       }
     : null;
 
-      
-
   const systemPrompt = buildWeatherPrompt(weatherPayload);
-  const assistantPrompt = LANGUAGE_ENFORCE_PROMPT;
 
-  // Resolve device id (if available) and debug log payload in development
-  let deviceId: string | null = null;
-  try {
-    deviceId = await getCurrentDeviceId();
-  } catch {
-    // ignore device id resolution errors
-    deviceId = null;
-  }
+  // Ambil Device ID sebelum mengirim request
+  const deviceId = await getUniqueDeviceId();
+
   try {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.debug('[WAMCHAT] sending payload to RAG backend:', {
@@ -145,7 +157,6 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
         device_id: deviceId,
         weather: weatherPayload,
         system_instructions: systemPrompt,
-        assistant_instructions: assistantPrompt,
       });
     }
   } catch {
@@ -158,10 +169,9 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message,
-        device_id: deviceId,
+        device_id: deviceId, // Disematkan di sini
         weather: weatherPayload,
         system_instructions: systemPrompt,
-        assistant_instructions: assistantPrompt,
       }),
     });
 
@@ -170,7 +180,6 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
     }
 
     const data = await response.json();
-    // Ensure we return a string reply even if API shape differs
     if (typeof data === 'string') return data;
     if (data && typeof data.reply === 'string') return data.reply;
     if (data && typeof data.answer === 'string') return data.answer;
