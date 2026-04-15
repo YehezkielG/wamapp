@@ -180,7 +180,7 @@ function detectAnomalies(input: {
     });
   }
 
-  if (input.tempC >= 35) {
+  if (input.tempC >= 33) {
     anomalies.push({
       kind: 'heat',
       title: 'Heat Alert',
@@ -189,7 +189,7 @@ function detectAnomalies(input: {
     });
   }
 
-  if (input.tempC <= 5) {
+  if (input.tempC <= 15) {
     anomalies.push({
       kind: 'cold',
       title: 'Cold Alert',

@@ -18,6 +18,7 @@ import {
   type Message,
 } from '../../../lib/chat/_chatUtils';
 import ChatSkeleton from '../../../components/skeleton_loading/Chat';
+import MarkdownText from '../../../components/MarkdownText';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 
 const INPUT_BOTTOM_GAP = 8;
@@ -156,10 +157,12 @@ export default function Chat() {
                 backgroundColor:
                   item.sender === 'user' ? chatTheme.userBubble : chatTheme.botBubble,
               }}>
-              <Text
-                style={{ color: item.sender === 'user' ? chatTheme.userText : chatTheme.botText }}>
-                {item.text}
-              </Text>
+              <MarkdownText
+                text={item.text}
+                textStyle={{ color: item.sender === 'user' ? chatTheme.userText : chatTheme.botText }}
+                codeStyle={{ backgroundColor: item.sender === 'user' ? '#0b1220' : '#0f172a', color: item.sender === 'user' ? '#dbeafe' : '#e6f0ff' }}
+                linkStyle={{ color: item.sender === 'user' ? '#60a5fa' : '#3b82f6' }}
+              />
             </View>
           )}
         />

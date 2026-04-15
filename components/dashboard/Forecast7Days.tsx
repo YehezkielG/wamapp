@@ -147,7 +147,7 @@ export default function Forecast7Days({
   }, [selectedDate, allSelectedHours.length, initialHourIndex]);
 
   return (
-    <View className="mt-8 w-full">
+    <View className="mt-8 pb-5 w-full">
       <Text className={`text-2xl font-bold ${titleClass}`}>Next 7 Days</Text>
 
       <View className="mt-3 gap-3">
@@ -272,13 +272,10 @@ export default function Forecast7Days({
             ? Array.from({ length: 4 }).map((_, index) => (
                 <View
                   key={`skeleton-7d-${index}`}
-                  className={`h-32 w-full rounded-2xl p-3 ${cardClass}`}>
+                  className={`h-24 w-full rounded-2xl p-3 ${cardClass}`}>
                   <View className={`h-3 w-24 rounded ${skeletonBarClass}`} />
                   <View className={`mt-3 h-4 w-40 rounded ${skeletonBarClass}`} />
                   <View className={`mt-2 h-4 w-36 rounded ${skeletonBarClass}`} />
-                  <View
-                    className={`mt-auto h-4 w-4 self-center rounded-full ${skeletonBarClass}`}
-                  />
                 </View>
               ))
             : null}

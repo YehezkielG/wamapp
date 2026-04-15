@@ -1,6 +1,6 @@
 import type { ColorValue } from 'react-native';
-import { useWeatherStore, WEATHER_REFRESH_INTERVAL_MS } from '../weather/weatherStore';
-import { useShallow } from 'zustand/react/shallow';
+import { useWeatherStore, } from '../weather/weatherStore';
+import { getCurrentDeviceId } from '../explore/markedLocationsService';
 
 export type Message = {
   id: string;
@@ -106,7 +106,7 @@ function buildWeatherPrompt(weather: any | null): string {
 const LANGUAGE_ENFORCE_PROMPT = `Important: Always reply in the same language as the user's message. Detect the language of the user's input and respond using that language. If the user's message is in Indonesian, reply in Indonesian; if in English, reply in English; if in another language, reply in that language. Ignore the language used in any external documents or RAG data — the user's message language has priority. Keep answers concise, natural, and appropriate for a general audience.`;
 
 export async function sendMessageToRAGBackend(message: string): Promise<string> {
-  const API_URL = 'http://10.79.151.30:8000/api/chat';
+  const API_URL = 'http://10.45.61.30:8000/api/chat';
   // const API_URL = 'https://wamapp-api-chatbot-production.up.railway.app/api/chat'
   // Collect current weather state from Zustand store (if available)
   const weatherState = useWeatherStore.getState().data;
@@ -116,6 +116,7 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
         locationName: weatherState.locationName ?? null,
         temperatureC: weatherState.temperatureC ?? null,
         weatherCode: weatherState.weatherCode ?? null,
+        currentTime: new Date().toISOString(),
         details: weatherState.details ?? null,
         // include a compact forecast summary if present (first few hours)
         // forecastHours: Array.isArray(weatherState.forecastHours)
@@ -129,11 +130,19 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
   const systemPrompt = buildWeatherPrompt(weatherPayload);
   const assistantPrompt = LANGUAGE_ENFORCE_PROMPT;
 
-  // Debug log payload in development
+  // Resolve device id (if available) and debug log payload in development
+  let deviceId: string | null = null;
+  try {
+    deviceId = await getCurrentDeviceId();
+  } catch {
+    // ignore device id resolution errors
+    deviceId = null;
+  }
   try {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.debug('[WAMCHAT] sending payload to RAG backend:', {
         message,
+        device_id: deviceId,
         weather: weatherPayload,
         system_instructions: systemPrompt,
         assistant_instructions: assistantPrompt,
@@ -147,7 +156,13 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, weather: weatherPayload, system_instructions: systemPrompt, assistant_instructions: assistantPrompt }),
+      body: JSON.stringify({
+        message,
+        device_id: deviceId,
+        weather: weatherPayload,
+        system_instructions: systemPrompt,
+        assistant_instructions: assistantPrompt,
+      }),
     });
 
     if (!response.ok) {
