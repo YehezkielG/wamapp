@@ -2,6 +2,7 @@ import type { ColorValue } from 'react-native';
 import { Platform } from 'react-native';
 import * as Application from 'expo-application';
 import { useWeatherStore } from '../weather/weatherStore';
+import { getCurrentDeviceId } from '../explore/markedLocationsService';
 
 export type Message = {
   id: string;
@@ -106,27 +107,7 @@ function buildWeatherPrompt(weather: any | null): string {
   return parts.join('\n');
 }
 
-// Fungsi pembantu untuk mendapatkan Device ID
-async function getUniqueDeviceId(): Promise<string> {
-  try {
-    if (Platform.OS === 'android') {
-      const maybeAndroidId =
-        typeof (Application as any).getAndroidId === 'function'
-          ? (Application as any).getAndroidId()
-          : null;
-      return (
-        (typeof maybeAndroidId === 'string' && maybeAndroidId.length > 0 ? maybeAndroidId : null) ??
-        'unknown_android'
-      );
-    } else if (Platform.OS === 'ios') {
-      const iosId = await Application.getIosIdForVendorAsync();
-      return iosId || 'unknown_ios';
-    }
-  } catch (error) {
-    console.warn('Gagal mendapatkan Device ID:', error);
-  }
-  return 'unknown_device';
-}
+
 
 export async function sendMessageToRAGBackend(message: string): Promise<string> {
   const API_URL = 'http://10.45.61.30:8000/api/chat';
@@ -148,7 +129,13 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
   const systemPrompt = buildWeatherPrompt(weatherPayload);
 
   // Ambil Device ID sebelum mengirim request
-  const deviceId = await getUniqueDeviceId();
+   let deviceId: string | null = null;
+  try {
+    deviceId = await getCurrentDeviceId();
+  } catch {
+    // ignore device id resolution errors
+    deviceId = null;
+  }
 
   try {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
