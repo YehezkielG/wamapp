@@ -116,12 +116,15 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
   // Collect current weather state from Zustand store
   const weatherState = useWeatherStore.getState().data;
 
+  const now = new Date();
   const weatherPayload = weatherState
     ? {
         locationName: weatherState.locationName ?? null,
         temperatureC: weatherState.temperatureC ?? null,
         weatherCode: weatherState.weatherCode ?? null,
-        currentTime: new Date().toISOString(),
+        currentDate: now.toLocaleDateString(),
+        currentTime: now.toLocaleTimeString(),
+        currentDateTime: now.toLocaleString(),
         details: weatherState.details ?? null,
       }
     : null;
