@@ -10,6 +10,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import {
@@ -21,6 +22,8 @@ import ChatSkeleton from '../../../components/skeleton_loading/Chat';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 
 const INPUT_BOTTOM_GAP = 8;
+const CHAT_HISTORY_KEY = 'wamapp:chat:history:v1';
+const MAX_PERSISTED_MESSAGES = 5;
 
 type TextSegment = { text: string; bold: boolean };
 
@@ -133,6 +136,55 @@ export default function Chat() {
   const headerSurfaceClass = isDarkUi
     ? 'rounded-2xl border border-white/30 bg-white/12'
     : 'rounded-2xl border border-white/70 bg-white/60';
+
+  useEffect(() => {
+    let active = true;
+
+    const loadChatHistory = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(CHAT_HISTORY_KEY);
+        if (!raw || !active) return;
+
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return;
+
+        const restored: Message[] = parsed
+          .filter(
+            (item): item is Message =>
+              item &&
+              typeof item.id === 'string' &&
+              typeof item.text === 'string' &&
+              (item.sender === 'user' || item.sender === 'bot')
+          )
+          .slice(-MAX_PERSISTED_MESSAGES);
+
+        if (restored.length > 0) {
+          setMessages(restored);
+        }
+      } catch {
+        // ignore malformed local cache
+      }
+    };
+
+    loadChatHistory();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const persist = async () => {
+      try {
+        const snapshot = messages.slice(-MAX_PERSISTED_MESSAGES);
+        await AsyncStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(snapshot));
+      } catch {
+        // ignore storage write errors
+      }
+    };
+
+    persist();
+  }, [messages]);
 
   useEffect(() => {
     const timerId = setInterval(() => {
