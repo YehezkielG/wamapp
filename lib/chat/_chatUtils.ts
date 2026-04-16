@@ -2,6 +2,7 @@ import type { ColorValue } from 'react-native';
 import { Platform } from 'react-native';
 import * as Application from 'expo-application';
 import { useWeatherStore } from '../weather/weatherStore';
+import { getCurrentDeviceId } from '../explore/markedLocationsService';
 
 export type Message = {
   id: string;
@@ -109,6 +110,10 @@ function buildWeatherPrompt(weather: any | null): string {
 // Fungsi pembantu untuk mendapatkan Device ID
 async function getUniqueDeviceId(): Promise<string> {
   try {
+    // Prioritaskan ID device yang sudah dipakai lintas fitur (marked locations / devices table)
+    const sharedDeviceId = await getCurrentDeviceId();
+    if (sharedDeviceId) return sharedDeviceId;
+
     if (Platform.OS === 'android') {
       const maybeAndroidId =
         typeof (Application as any).getAndroidId === 'function'
@@ -129,7 +134,7 @@ async function getUniqueDeviceId(): Promise<string> {
 }
 
 export async function sendMessageToRAGBackend(message: string): Promise<string> {
-  const API_URL = 'http://10.16.1.12:8000/api/chat';
+  const API_URL = 'http://10.34.155.141:8000/api/chat';
   // const API_URL = 'https://wamapp-api-chatbot-production.up.railway.app/api/chat'
 
   // Collect current weather state from Zustand store
