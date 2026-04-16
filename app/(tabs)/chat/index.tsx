@@ -10,7 +10,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createClient } from '@supabase/supabase-js';
 
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import {
@@ -19,11 +19,26 @@ import {
   type Message,
 } from '../../../lib/chat/_chatUtils';
 import ChatSkeleton from '../../../components/skeleton_loading/Chat';
+import { getCurrentDeviceId } from '../../../lib/explore/markedLocationsService';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 
 const INPUT_BOTTOM_GAP = 8;
-const CHAT_HISTORY_KEY = 'wamapp:chat:history:v1';
 const MAX_PERSISTED_MESSAGES = 5;
+
+const CHATBOT_SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL_CHATBOT;
+const CHATBOT_SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY_CHATBOT;
+
+const chatbotSupabase =
+  CHATBOT_SUPABASE_URL && CHATBOT_SUPABASE_ANON_KEY
+    ? createClient(CHATBOT_SUPABASE_URL, CHATBOT_SUPABASE_ANON_KEY)
+    : null;
+
+type ChatHistoryRow = {
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+};
 
 type TextSegment = { text: string; bold: boolean };
 
@@ -142,27 +157,34 @@ export default function Chat() {
 
     const loadChatHistory = async () => {
       try {
-        const raw = await AsyncStorage.getItem(CHAT_HISTORY_KEY);
-        if (!raw || !active) return;
+        if (!chatbotSupabase) return;
 
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return;
+        const deviceId = await getCurrentDeviceId();
+        if (!deviceId || !active) return;
 
-        const restored: Message[] = parsed
-          .filter(
-            (item): item is Message =>
-              item &&
-              typeof item.id === 'string' &&
-              typeof item.text === 'string' &&
-              (item.sender === 'user' || item.sender === 'bot')
-          )
-          .slice(-MAX_PERSISTED_MESSAGES);
+        const { data, error } = await chatbotSupabase
+          .from('chat_history')
+          .select('id, role, content, created_at')
+          .eq('device_id', deviceId)
+          .order('created_at', { ascending: false })
+          .limit(MAX_PERSISTED_MESSAGES);
+
+        if (error || !Array.isArray(data)) return;
+
+        const restored: Message[] = (data as ChatHistoryRow[])
+          .slice()
+          .reverse()
+          .map((row) => ({
+            id: String(row.id),
+            text: row.content,
+            sender: row.role === 'user' ? 'user' : 'bot',
+          }));
 
         if (restored.length > 0) {
           setMessages(restored);
         }
       } catch {
-        // ignore malformed local cache
+        // ignore restore errors
       }
     };
 
@@ -173,18 +195,22 @@ export default function Chat() {
     };
   }, []);
 
-  useEffect(() => {
-    const persist = async () => {
-      try {
-        const snapshot = messages.slice(-MAX_PERSISTED_MESSAGES);
-        await AsyncStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(snapshot));
-      } catch {
-        // ignore storage write errors
-      }
-    };
+  const persistMessageToDb = async (role: 'user' | 'bot', content: string) => {
+    try {
+      if (!chatbotSupabase || !content.trim()) return;
 
-    persist();
-  }, [messages]);
+      const deviceId = await getCurrentDeviceId();
+      if (!deviceId) return;
+
+      await chatbotSupabase.from('chat_history').insert({
+        device_id: deviceId,
+        role,
+        content,
+      });
+    } catch {
+      // ignore write errors
+    }
+  };
 
   useEffect(() => {
     const timerId = setInterval(() => {
@@ -202,7 +228,9 @@ export default function Chat() {
     if (!cleaned || isLoading) return; // Cegah spam klik saat loading
 
     // 1. Tambahkan pesan user
-    setMessages((prev) => [...prev, { id: Date.now().toString(), text: cleaned, sender: 'user' }]);
+    const userMessage: Message = { id: Date.now().toString(), text: cleaned, sender: 'user' };
+    setMessages((prev) => [...prev, userMessage]);
+    void persistMessageToDb('user', cleaned);
     setInputText('');
     setInputHeight(44);
 
@@ -226,10 +254,13 @@ export default function Chat() {
     }
 
     // 4. Tambahkan balasan bot
-    setMessages((prev) => [
-      ...prev,
-      { id: (Date.now() + 1).toString(), text: localizedReply, sender: 'bot' },
-    ]);
+    const botMessage: Message = {
+      id: (Date.now() + 1).toString(),
+      text: localizedReply,
+      sender: 'bot',
+    };
+    setMessages((prev) => [...prev, botMessage]);
+    void persistMessageToDb('bot', localizedReply);
 
     // 5. Matikan loading
     setIsLoading(false);
