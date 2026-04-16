@@ -1,6 +1,4 @@
 import type { ColorValue } from 'react-native';
-import { Platform } from 'react-native';
-import * as Application from 'expo-application';
 import { useWeatherStore } from '../weather/weatherStore';
 import { getCurrentDeviceId } from '../explore/markedLocationsService';
 
@@ -140,11 +138,17 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
     deviceId = null;
   }
 
+  const timezoneName =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  const utcOffsetMinutes = new Date().getTimezoneOffset() * -1;
+
   try {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.debug('[WAMCHAT] sending payload to RAG backend:', {
         message,
         device_id: deviceId,
+        timezone_name: timezoneName,
+        utc_offset_minutes: utcOffsetMinutes,
         weather: weatherPayload,
         system_instructions: systemPrompt,
       });
@@ -160,6 +164,8 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
       body: JSON.stringify({
         message,
         device_id: deviceId, // Disematkan di sini
+        timezone_name: timezoneName,
+        utc_offset_minutes: utcOffsetMinutes,
         weather: weatherPayload,
         system_instructions: systemPrompt,
       }),
