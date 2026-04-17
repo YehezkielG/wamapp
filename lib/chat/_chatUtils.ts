@@ -4,11 +4,25 @@ import * as Application from 'expo-application';
 import { useWeatherStore } from '../weather/weatherStore';
 import { getCurrentDeviceId } from '../explore/markedLocationsService';
 
+const CHATBOT_API_BASE_URL =
+  process.env.EXPO_PUBLIC_CHATBOT_API_BASE_URL ?? 'http://10.34.155.141:8000';
+const CHAT_API_URL = `${CHATBOT_API_BASE_URL}/api/chat`;
+const CHAT_TOKEN_URL = `${CHATBOT_API_BASE_URL}/api/chat/token`;
+const WAMAPP_CLIENT_KEY = process.env.EXPO_PUBLIC_WAMAPP_CLIENT_KEY ?? '';
+
 export type Message = {
   id: string;
   text: string;
   sender: 'user' | 'bot';
 };
+
+type ChatAccessTokenCache = {
+  deviceId: string;
+  token: string;
+  expiresAtMs: number;
+};
+
+let chatAccessTokenCache: ChatAccessTokenCache | null = null;
 
 export type ChatTheme = {
   titleColor: string;
@@ -133,10 +147,70 @@ async function getUniqueDeviceId(): Promise<string> {
   return 'unknown_device';
 }
 
-export async function sendMessageToRAGBackend(message: string): Promise<string> {
-  const API_URL = 'http://10.34.155.141:8000/api/chat';
-  // const API_URL = 'https://wamapp-api-chatbot-production.up.railway.app/api/chat'
+async function getChatAccessToken(deviceId: string, forceRefresh = false): Promise<string> {
+  const nowMs = Date.now();
+  if (
+    !forceRefresh &&
+    chatAccessTokenCache &&
+    chatAccessTokenCache.deviceId === deviceId &&
+    chatAccessTokenCache.expiresAtMs > nowMs + 30_000
+  ) {
+    return chatAccessTokenCache.token;
+  }
 
+  const response = await fetch(CHAT_TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-wamapp-client-key': WAMAPP_CLIENT_KEY,
+    },
+    body: JSON.stringify({ device_id: deviceId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gagal mengambil token chat (status: ${response.status})`);
+  }
+
+  const data = await response.json();
+  const token = typeof data?.token === 'string' ? data.token : '';
+  const expiresIn = Number.isFinite(data?.expires_in) ? Number(data.expires_in) : 600;
+
+  if (!token) {
+    throw new Error('Token chat tidak valid dari server.');
+  }
+
+  chatAccessTokenCache = {
+    deviceId,
+    token,
+    expiresAtMs: nowMs + Math.max(60, expiresIn) * 1000,
+  };
+
+  return token;
+}
+
+async function postChatMessage(params: {
+  message: string;
+  deviceId: string;
+  weatherPayload: any;
+  systemPrompt: string;
+  accessToken: string;
+}): Promise<Response> {
+  return fetch(CHAT_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${params.accessToken}`,
+    },
+    body: JSON.stringify({
+      message: params.message,
+      device_id: params.deviceId,
+      weather: params.weatherPayload,
+      system_instructions: params.systemPrompt,
+    }),
+  });
+}
+
+export async function sendMessageToRAGBackend(message: string): Promise<string> {
   // Collect current weather state from Zustand store
   const weatherState = useWeatherStore.getState().data;
 
@@ -153,14 +227,18 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
 
   // Ambil Device ID sebelum mengirim request
   const deviceId = await getUniqueDeviceId();
+  let accessToken = '';
 
   try {
+    accessToken = await getChatAccessToken(deviceId);
+
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.debug('[WAMCHAT] sending payload to RAG backend:', {
         message,
         device_id: deviceId,
         weather: weatherPayload,
         system_instructions: systemPrompt,
+        token_attached: Boolean(accessToken),
       });
     }
   } catch {
@@ -168,16 +246,24 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
   }
 
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        device_id: deviceId, // Disematkan di sini
-        weather: weatherPayload,
-        system_instructions: systemPrompt,
-      }),
+    let response = await postChatMessage({
+      message,
+      deviceId,
+      weatherPayload,
+      systemPrompt,
+      accessToken,
     });
+
+    if (response.status === 401) {
+      accessToken = await getChatAccessToken(deviceId, true);
+      response = await postChatMessage({
+        message,
+        deviceId,
+        weatherPayload,
+        systemPrompt,
+        accessToken,
+      });
+    }
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
