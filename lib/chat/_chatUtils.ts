@@ -80,7 +80,13 @@ function buildWeatherPrompt(weather: any | null): string {
   );
   parts.push(`Location: ${weather.locationName ?? 'unknown'}`);
   parts.push(`Current temperature: ${weather.temperatureC ?? 'unknown'} °C`);
-  parts.push(`Weather code: ${weather.weatherCode ?? 'unknown'}`);
+  // If a human-readable label is provided, include it alongside the numeric code
+  const label = weather.weatherLabel ?? null;
+  if (label) {
+    parts.push(`Weather: ${label} (code ${weather.weatherCode ?? 'unknown'})`);
+  } else {
+    parts.push(`Weather code: ${weather.weatherCode ?? 'unknown'}`);
+  }
 
   const d = weather.details ?? {};
   parts.push('Details:');
@@ -92,8 +98,9 @@ function buildWeatherPrompt(weather: any | null): string {
   if (Array.isArray(weather.forecastHours) && weather.forecastHours.length) {
     parts.push('Forecast (next hours):');
     for (const h of weather.forecastHours.slice(0, 6)) {
+      const hourLabel = h.weatherLabel ?? h.weatherCode ?? '??';
       parts.push(
-        `- ${h.time ?? 'unknown time'} : ${h.temperatureC ?? '??'}°C (code ${h.weatherCode ?? '??'})`
+        `- ${h.time ?? 'unknown time'} : ${h.temperatureC ?? '??'}°C (${hourLabel})`
       );
     }
   }
@@ -105,6 +112,20 @@ function buildWeatherPrompt(weather: any | null): string {
   return parts.join('\n');
 }
 
+// Map numeric weather codes to human-readable Indonesian labels.
+export function weatherCodeToLabel(code?: number): string | null {
+  if (code === undefined || code === null) return null;
+  if (code === 0) return 'Cerah';
+  if (code === 1 || code === 2) return 'Cerah berawan';
+  if (code === 3) return 'Berawan';
+  if (code === 45 || code === 48) return 'Berkabut';
+  if (code === 51 || code === 53 || code === 55) return 'Gerimis';
+  if (code === 61 || code === 63 || code === 65) return 'Hujan';
+  if (code === 71 || code === 73 || code === 75) return 'Salju/Butiran salju';
+  if (code === 80 || code === 81 || code === 82) return 'Hujan lokal';
+  if (code === 95 || code === 96 || code === 99) return 'Badai petir';
+  return 'Tidak diketahui';
+}
 
 
 export async function sendMessageToRAGBackend(message: string): Promise<string> {
@@ -120,10 +141,17 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
         locationName: weatherState.locationName ?? null,
         temperatureC: weatherState.temperatureC ?? null,
         weatherCode: weatherState.weatherCode ?? null,
+        weatherLabel: weatherCodeToLabel(weatherState.weatherCode),
         currentDate: now.toLocaleDateString(),
         currentTime: now.toLocaleTimeString(),
         currentDateTime: now.toLocaleString(),
         details: weatherState.details ?? null,
+        forecastHours: Array.isArray(weatherState.forecastHours)
+          ? weatherState.forecastHours.map((h: any) => ({
+              ...h,
+              weatherLabel: weatherCodeToLabel(h?.weatherCode),
+            }))
+          : null,
       }
     : null;
 

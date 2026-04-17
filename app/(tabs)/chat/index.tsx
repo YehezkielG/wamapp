@@ -18,7 +18,6 @@ import {
   type Message,
 } from '../../../lib/chat/_chatUtils';
 import ChatSkeleton from '../../../components/skeleton_loading/Chat';
-import MarkdownText from '../../../components/MarkdownText';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 
 const INPUT_BOTTOM_GAP = 8;
