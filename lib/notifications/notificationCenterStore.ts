@@ -78,16 +78,19 @@ export const useNotificationCenterStore = create<NotificationCenterStore>((set, 
     const device = await getDeviceClient();
     if (!device) return;
 
+    const previousNotifications = get().notifications;
+
+    set({ notifications: [] });
+
     const { error } = await device.client
       .from('notifications')
       .delete()
       .eq('device_id', device.deviceId);
 
     if (error) {
+      set({ notifications: previousNotifications });
       throw new Error(`Failed to clear notifications: ${error.message}`);
     }
-
-    set({ notifications: [] });
   },
 
   deleteNotification: async (notificationId: string) => {

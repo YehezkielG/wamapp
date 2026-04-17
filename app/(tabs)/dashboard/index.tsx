@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import Forecast12Hours from '../../../components/dashboard/Forecast12Hours';
@@ -9,6 +10,7 @@ import WeatherAlertEmergencyCard from '../../../components/dashboard/WeatherAler
 import { useNotificationCenterStore } from '../../../lib/notifications/notificationCenterStore';
 import { useWeatherStore, WEATHER_REFRESH_INTERVAL_MS } from '../../../lib/weather/weatherStore';
 import { useShallow } from 'zustand/react/shallow';
+import { buildChatPromptFromNotification } from '../../../lib/chat/_chatUtils';
 
 type WeatherVisual = {
   label: string;
@@ -56,6 +58,7 @@ function celsiusToFahrenheit(valueInCelsius: number) {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const [now, setNow] = useState(new Date());
   const [unit, setUnit] = useState<'C' | 'F'>('C');
   const [activeNotification, setActiveNotification] = useState<LatestNotification | null>(null);
@@ -118,12 +121,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     void loadNotifications();
-
-    const timerId = setInterval(() => {
-      void loadNotifications();
-    }, 30000);
-
-    return () => clearInterval(timerId);
   }, [loadNotifications]);
 
   const displayedTime = useMemo(
@@ -233,6 +230,28 @@ export default function Dashboard() {
     setActiveNotification(null);
   };
 
+  const handleOpenNotificationChat = () => {
+    if (!visibleNotification) return;
+
+    const draft = buildChatPromptFromNotification({
+      title: visibleNotification.title,
+      message: visibleNotification.message,
+      category: visibleNotification.category,
+      source: 'dashboard',
+    });
+
+    router.push({
+      pathname: '/chat',
+      params: {
+        draft,
+        title: visibleNotification.title,
+        message: visibleNotification.message,
+        category: visibleNotification.category,
+        source: 'dashboard',
+      },
+    });
+  };
+
   return (
     <ScrollView
       className="flex-1 bg-transparent"
@@ -246,6 +265,7 @@ export default function Dashboard() {
               createdAt: visibleNotification.created_at,
             }}
             isDarkUi={isDarkUi}
+            onOpenChat={handleOpenNotificationChat}
             onDismiss={handleDismissNotification}
           />
         </View>

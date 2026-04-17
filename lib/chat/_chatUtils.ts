@@ -1,9 +1,11 @@
 import type { ColorValue } from 'react-native';
+import { Platform } from 'react-native';
+import * as Application from 'expo-application';
 import { useWeatherStore } from '../weather/weatherStore';
 import { getCurrentDeviceId } from '../explore/markedLocationsService';
 
 const CHATBOT_API_BASE_URL =
-  process.env.EXPO_PUBLIC_CHATBOT_API_BASE_URL ?? 'http://10.34.155.141:8000';
+  process.env.EXPO_PUBLIC_CHATBOT_API_BASE_URL;
 const CHAT_API_URL = `${CHATBOT_API_BASE_URL}/api/chat`;
 const CHAT_TOKEN_URL = `${CHATBOT_API_BASE_URL}/api/chat/token`;
 const WAMAPP_CLIENT_KEY = process.env.EXPO_PUBLIC_WAMAPP_CLIENT_KEY ?? '';
@@ -13,6 +15,35 @@ export type Message = {
   text: string;
   sender: 'user' | 'bot';
 };
+
+export type ChatPromptSource = {
+  title?: string;
+  message?: string;
+  category?: string;
+  source?: 'dashboard' | 'history' | 'explore' | 'expo_push';
+};
+
+export function buildChatPromptFromNotification(source: ChatPromptSource): string {
+  const title = source.title?.trim() || 'Notifikasi cuaca';
+  const message = source.message?.trim() || 'Tidak ada detail tambahan.';
+  const category = source.category?.trim() || 'umum';
+  const originLabel =
+    source.source === 'expo_push'
+      ? 'push notification'
+      : source.source === 'history'
+        ? 'riwayat notifikasi'
+        : source.source === 'explore'
+          ? 'explore'
+          : 'dashboard';
+
+  return [
+    `Saya membuka ${originLabel} dengan kategori ${category}.`,
+    `Judul notifikasi: ${title}`,
+    `Isi notifikasi: ${message}`,
+    '',
+    'Tolong bantu jelaskan arti notifikasi ini, tingkat risikonya, dan langkah yang sebaiknya saya lakukan.',
+  ].join('\n');
+}
 
 type ChatAccessTokenCache = {
   deviceId: string;
@@ -92,15 +123,13 @@ function buildWeatherPrompt(weather: any | null): string {
   parts.push(
     "You are being provided with the user's current local weather conditions. Treat the following as factual, real-time observations for the user's location. Use this data to answer questions, give suggestions, or produce content that assumes the user's present weather. Do NOT invent or change these values."
   );
+  // Instruction for the LLM: prefer human-readable labels over numeric codes
+  parts.push(
+    "PENTING: Saat menyebut kondisi cuaca dalam jawabanmu, gunakan keterangan yang dapat dimengerti manusia (mis. 'Cerah', 'Hujan', 'Badai petir') dan bukan hanya kode numerik. Jika payload menyediakan keduanya, prioritaskan keterangan (label)."
+  );
   parts.push(`Location: ${weather.locationName ?? 'unknown'}`);
   parts.push(`Current temperature: ${weather.temperatureC ?? 'unknown'} °C`);
-  // If a human-readable label is provided, include it alongside the numeric code
-  const label = weather.weatherLabel ?? null;
-  if (label) {
-    parts.push(`Weather: ${label} (code ${weather.weatherCode ?? 'unknown'})`);
-  } else {
-    parts.push(`Weather code: ${weather.weatherCode ?? 'unknown'}`);
-  }
+  parts.push(`Weather code: ${weather.weatherCode ?? 'unknown'}`);
 
   const d = weather.details ?? {};
   parts.push('Details:');
@@ -112,9 +141,8 @@ function buildWeatherPrompt(weather: any | null): string {
   if (Array.isArray(weather.forecastHours) && weather.forecastHours.length) {
     parts.push('Forecast (next hours):');
     for (const h of weather.forecastHours.slice(0, 6)) {
-      const hourLabel = h.weatherLabel ?? h.weatherCode ?? '??';
       parts.push(
-        `- ${h.time ?? 'unknown time'} : ${h.temperatureC ?? '??'}°C (${hourLabel})`
+        `- ${h.time ?? 'unknown time'} : ${h.temperatureC ?? '??'}°C (code ${h.weatherCode ?? '??'})`
       );
     }
   }
@@ -126,19 +154,30 @@ function buildWeatherPrompt(weather: any | null): string {
   return parts.join('\n');
 }
 
-// Map numeric weather codes to human-readable Indonesian labels.
-export function weatherCodeToLabel(code?: number): string | null {
-  if (code === undefined || code === null) return null;
-  if (code === 0) return 'Cerah';
-  if (code === 1 || code === 2) return 'Cerah berawan';
-  if (code === 3) return 'Berawan';
-  if (code === 45 || code === 48) return 'Berkabut';
-  if (code === 51 || code === 53 || code === 55) return 'Gerimis';
-  if (code === 61 || code === 63 || code === 65) return 'Hujan';
-  if (code === 71 || code === 73 || code === 75) return 'Salju/Butiran salju';
-  if (code === 80 || code === 81 || code === 82) return 'Hujan lokal';
-  if (code === 95 || code === 96 || code === 99) return 'Badai petir';
-  return 'Tidak diketahui';
+// Fungsi pembantu untuk mendapatkan Device ID
+async function getUniqueDeviceId(): Promise<string> {
+  try {
+    // Prioritaskan ID device yang sudah dipakai lintas fitur (marked locations / devices table)
+    const sharedDeviceId = await getCurrentDeviceId();
+    if (sharedDeviceId) return sharedDeviceId;
+
+    if (Platform.OS === 'android') {
+      const maybeAndroidId =
+        typeof (Application as any).getAndroidId === 'function'
+          ? (Application as any).getAndroidId()
+          : null;
+      return (
+        (typeof maybeAndroidId === 'string' && maybeAndroidId.length > 0 ? maybeAndroidId : null) ??
+        'unknown_android'
+      );
+    } else if (Platform.OS === 'ios') {
+      const iosId = await Application.getIosIdForVendorAsync();
+      return iosId || 'unknown_ios';
+    }
+  } catch (error) {
+    console.warn('Gagal mendapatkan Device ID:', error);
+  }
+  return 'unknown_device';
 }
 
 async function getChatAccessToken(deviceId: string, forceRefresh = false): Promise<string> {
@@ -188,6 +227,8 @@ async function postChatMessage(params: {
   weatherPayload: any;
   systemPrompt: string;
   accessToken: string;
+  timezoneName: string | null;
+  utcOffsetMinutes: number;
 }): Promise<Response> {
   return fetch(CHAT_API_URL, {
     method: 'POST',
@@ -200,6 +241,8 @@ async function postChatMessage(params: {
       device_id: params.deviceId,
       weather: params.weatherPayload,
       system_instructions: params.systemPrompt,
+      timezone_name: params.timezoneName,
+      utc_offset_minutes: params.utcOffsetMinutes,
     }),
   });
 }
@@ -208,23 +251,15 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
   // Collect current weather state from Zustand store
   const weatherState = useWeatherStore.getState().data;
 
-  const now = new Date();
+  const timezoneName = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  const utcOffsetMinutes = new Date().getTimezoneOffset() * -1;
+
   const weatherPayload = weatherState
     ? {
         locationName: weatherState.locationName ?? null,
         temperatureC: weatherState.temperatureC ?? null,
         weatherCode: weatherState.weatherCode ?? null,
-        weatherLabel: weatherCodeToLabel(weatherState.weatherCode),
-        currentDate: now.toLocaleDateString(),
-        currentTime: now.toLocaleTimeString(),
-        currentDateTime: now.toLocaleString(),
         details: weatherState.details ?? null,
-        forecastHours: Array.isArray(weatherState.forecastHours)
-          ? weatherState.forecastHours.map((h: any) => ({
-              ...h,
-              weatherLabel: weatherCodeToLabel(h?.weatherCode),
-            }))
-          : null,
       }
     : null;
 
@@ -241,10 +276,10 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
       console.debug('[WAMCHAT] sending payload to RAG backend:', {
         message,
         device_id: deviceId,
-        timezone_name: timezoneName,
-        utc_offset_minutes: utcOffsetMinutes,
         weather: weatherPayload,
         system_instructions: systemPrompt,
+        timezone_name: timezoneName,
+        utc_offset_minutes: utcOffsetMinutes,
         token_attached: Boolean(accessToken),
       });
     }
@@ -259,6 +294,8 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
       weatherPayload,
       systemPrompt,
       accessToken,
+      timezoneName,
+      utcOffsetMinutes,
     });
 
     if (response.status === 401) {
@@ -269,6 +306,8 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
         weatherPayload,
         systemPrompt,
         accessToken,
+        timezoneName,
+        utcOffsetMinutes,
       });
     }
 

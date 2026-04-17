@@ -1,5 +1,5 @@
 import React, { useMemo, useRef } from 'react';
-import { Animated, PanResponder, Text, View } from 'react-native';
+import { Animated, PanResponder, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 export type WeatherAlertEmergencyData = {
@@ -12,12 +12,14 @@ type WeatherAlertEmergencyCardProps = {
   alert: WeatherAlertEmergencyData;
   isDarkUi: boolean;
   onDismiss?: () => void;
+  onOpenChat?: () => void;
 };
 
 export default function WeatherAlertEmergencyCard({
   alert,
   isDarkUi,
   onDismiss,
+  onOpenChat,
 }: WeatherAlertEmergencyCardProps) {
   const translateX = useRef(new Animated.Value(0)).current;
 
@@ -115,7 +117,7 @@ export default function WeatherAlertEmergencyCard({
       <Animated.View
         {...panResponder.panHandlers}
         style={{ transform: [{ translateX }], opacity: cardOpacity }}>
-        <View className={cardClass}>
+        <Pressable className={cardClass} onPress={onOpenChat}>
           <View className="mb-2 flex-row items-center justify-between">
             <View className="flex-row items-center gap-2">
               <Ionicons name="warning-outline" size={18} color="#facc15" />
@@ -130,7 +132,7 @@ export default function WeatherAlertEmergencyCard({
           <Text className={`mt-1 text-sm leading-5 ${messageClass}`} numberOfLines={4}>
             {alert.message}
           </Text>
-        </View>
+        </Pressable>
       </Animated.View>
     </View>
   );

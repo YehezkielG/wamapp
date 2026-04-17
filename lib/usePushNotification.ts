@@ -3,8 +3,10 @@ import { useEffect, useRef } from 'react';
 import { Platform, Alert } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import { useRouter } from 'expo-router';
 import { saveDevicePushToken } from './explore/markedLocationsService';
 import { useNotificationSettingsStore } from './notifications/notificationSettingsStore';
+import { buildChatPromptFromNotification } from './chat/_chatUtils';
 
 // Pengaturan default agar notif muncul walau app sedang dibuka (foreground)
 Notifications.setNotificationHandler({
@@ -17,11 +19,48 @@ Notifications.setNotificationHandler({
 });
 
 export const usePushNotifications = () => {
+  const router = useRouter();
   const enabled = useNotificationSettingsStore((state) => state.enabled);
   const osPermission = useNotificationSettingsStore((state) => state.osPermission);
   const refreshOsPermission = useNotificationSettingsStore((state) => state.refreshOsPermission);
   const setEnabledSilently = useNotificationSettingsStore((state) => state.setEnabledSilently);
   const lastSavedTokenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const routeToChat = (notification: Notifications.Notification) => {
+      const content = notification.request.content;
+      const data = (content.data ?? {}) as Record<string, unknown>;
+      const draft = buildChatPromptFromNotification({
+        title: typeof content.title === 'string' ? content.title : undefined,
+        message: typeof content.body === 'string' ? content.body : undefined,
+        category: typeof data.category === 'string' ? data.category : undefined,
+        source: 'expo_push',
+      });
+
+      router.push({
+        pathname: '/chat',
+        params: {
+          draft,
+          title: typeof content.title === 'string' ? content.title : '',
+          message: typeof content.body === 'string' ? content.body : '',
+          category: typeof data.category === 'string' ? data.category : '',
+          source: 'expo_push',
+        },
+      });
+    };
+
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      routeToChat(response.notification);
+    });
+
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) {
+        routeToChat(response.notification);
+      }
+    });
+
+    return () => responseSubscription.remove();
+  }, [router]);
 
   useEffect(() => {
     if (osPermission !== null) return;

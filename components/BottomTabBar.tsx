@@ -2,18 +2,20 @@ import React, { useMemo } from 'react';
 import { ColorValue, StyleSheet, TouchableOpacity, useColorScheme, View } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useWeatherBackground } from './WeatherBackgroundContext';
 
 type TabItem = {
   name: string;
   route: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: keyof typeof Ionicons.glyphMap | keyof typeof MaterialCommunityIcons.glyphMap;
+  iconFamily?: 'ionicons' | 'material';
 };
 
 const TABS: TabItem[] = [
   { name: 'Your Location', route: '/dashboard', icon: 'location' },
   { name: 'Explore', route: '/explore', icon: 'compass' },
-  { name: 'Chat', route: '/chat', icon: 'chatbubble' },
+  { name: 'Chat', route: '/chat', icon: 'robot', iconFamily: 'material' },
   { name: 'History', route: '/history', icon: 'time' },
 ];
 
@@ -82,11 +84,19 @@ export default function BottomTabBar() {
               accessibilityLabel={tab.name}
             >
               <View style={[styles.iconPill, active && styles.iconPillActive]}>
-                <Ionicons
-                  name={active ? tab.icon : (`${tab.icon}-outline` as any)}
-                  size={22}
-                  color={active ? iconActiveColor : iconInactiveColor}
-                />
+                {tab.iconFamily === 'material' ? (
+                  <MaterialCommunityIcons
+                    name={tab.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                    size={22}
+                    color={active ? iconActiveColor : iconInactiveColor}
+                  />
+                ) : (
+                  <Ionicons
+                    name={active ? (tab.icon as keyof typeof Ionicons.glyphMap) : (`${tab.icon}-outline` as any)}
+                    size={22}
+                    color={active ? iconActiveColor : iconInactiveColor}
+                  />
+                )}
               </View>
             </TouchableOpacity>
           );

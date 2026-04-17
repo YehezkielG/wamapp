@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ActivityIndicator, Animated, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import HistorySkeleton from '../../../components/skeleton_loading/History';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import { useNotificationSettingsStore } from '../../../lib/notifications/notificationSettingsStore';
 import { useNotificationCenterStore } from '../../../lib/notifications/notificationCenterStore';
+import { buildChatPromptFromNotification } from '../../../lib/chat/_chatUtils';
 
 type NotificationHistoryRow = {
   id: string;
@@ -22,9 +24,10 @@ type NotificationRowProps = {
   isDarkUi: boolean;
   onDelete: (notificationId: string) => Promise<void>;
   onMarkUnread: (notificationId: string) => Promise<void>;
+  onOpenChat: (item: NotificationHistoryRow) => void;
 };
 
-function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread }: NotificationRowProps) {
+function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread, onOpenChat }: NotificationRowProps) {
   const translateX = useRef(new Animated.Value(0)).current;
   const [isBusy, setIsBusy] = useState(false);
 
@@ -149,6 +152,7 @@ function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread }: Notificatio
         style={{ transform: [{ translateX }], opacity: cardOpacity }}>
         <Pressable
           disabled={isBusy}
+          onPress={() => onOpenChat(item)}
           className={`w-full rounded-2xl px-3 py-3 ${cardClass}`}>
           <View className="flex-row items-start justify-between gap-3">
             <View className="flex-1">
@@ -177,6 +181,7 @@ function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread }: Notificatio
 }
 
 export default function History() {
+  const router = useRouter();
   const [currentHour, setCurrentHour] = useState(() => new Date().getHours());
   const weatherCode = useWeatherStore((state) => state.data?.weatherCode);
   const { setFromWeather } = useWeatherBackground();
@@ -253,10 +258,30 @@ export default function History() {
         text: 'Clear',
         style: 'destructive',
         onPress: () => {
-          void clearNotifications().then(() => void loadNotifications());
+          void clearNotifications();
         },
       },
     ]);
+  };
+
+  const handleOpenChatFromNotification = (item: NotificationHistoryRow) => {
+    const draft = buildChatPromptFromNotification({
+      title: item.title,
+      message: item.message,
+      category: item.category,
+      source: 'history',
+    });
+
+    router.push({
+      pathname: '/chat',
+      params: {
+        draft,
+        title: item.title,
+        message: item.message,
+        category: item.category,
+        source: 'history',
+      },
+    });
   };
 
   return (
@@ -329,6 +354,7 @@ export default function History() {
               isDarkUi={isDarkUi}
               onDelete={deleteNotification}
               onMarkUnread={markNotificationUnread}
+              onOpenChat={handleOpenChatFromNotification}
             />
           ))}
         </View>

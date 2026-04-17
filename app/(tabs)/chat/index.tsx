@@ -10,35 +10,22 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { createClient } from '@supabase/supabase-js';
+import { useLocalSearchParams } from 'expo-router';
 
 import { useWeatherBackground } from '../../../components/WeatherBackgroundContext';
 import {
   getChatThemeFromBackgroundColors,
+  buildChatPromptFromNotification,
   sendMessageToRAGBackend,
   type Message,
 } from '../../../lib/chat/_chatUtils';
+import { useChatStore } from '../../../lib/chat/chatStore';
 import ChatSkeleton from '../../../components/skeleton_loading/Chat';
 import { getCurrentDeviceId } from '../../../lib/explore/markedLocationsService';
+import { createSupabaseClientForDevice } from '../../../lib/supabaseClient';
 import { useWeatherStore } from '../../../lib/weather/weatherStore';
 
 const INPUT_BOTTOM_GAP = 8;
-const MAX_PERSISTED_MESSAGES = 5;
-
-const CHATBOT_SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL_CHATBOT;
-const CHATBOT_SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY_CHATBOT;
-
-const chatbotSupabase =
-  CHATBOT_SUPABASE_URL && CHATBOT_SUPABASE_ANON_KEY
-    ? createClient(CHATBOT_SUPABASE_URL, CHATBOT_SUPABASE_ANON_KEY)
-    : null;
-
-type ChatHistoryRow = {
-  id: number;
-  role: string;
-  content: string;
-  created_at: string;
-};
 
 type TextSegment = { text: string; bold: boolean };
 
@@ -132,8 +119,9 @@ async function translateEnglishToIndonesian(text: string): Promise<string> {
 }
 
 export default function Chat() {
+  const searchParams = useLocalSearchParams<{ draft?: string; title?: string; message?: string; category?: string; source?: string }>();
   const { colors } = useWeatherBackground();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const messages = useChatStore((state) => state.messages);
   const [inputText, setInputText] = useState('');
   const [inputHeight, setInputHeight] = useState(44);
   const [isLoading, setIsLoading] = useState(false); // State untuk loading bot
@@ -141,6 +129,34 @@ export default function Chat() {
   const translateCacheRef = useRef<Map<string, string>>(new Map());
   const chatTheme = getChatThemeFromBackgroundColors(colors);
   const weatherCode = useWeatherStore((state) => state.data?.weatherCode);
+  const hasLoadedHistory = useChatStore((state) => state.hasLoadedHistory);
+  const isLoadingHistory = useChatStore((state) => state.isLoadingHistory);
+  const loadChatHistory = useChatStore((state) => state.loadChatHistory);
+  const appendMessage = useChatStore((state) => state.appendMessage);
+
+  useEffect(() => {
+    const draft = typeof searchParams.draft === 'string' ? searchParams.draft : '';
+    const title = typeof searchParams.title === 'string' ? searchParams.title : '';
+    const message = typeof searchParams.message === 'string' ? searchParams.message : '';
+    const category = typeof searchParams.category === 'string' ? searchParams.category : '';
+    const source = typeof searchParams.source === 'string' ? (searchParams.source as any) : undefined;
+
+    if (draft.trim()) {
+      setInputText(draft);
+      return;
+    }
+
+    if (title.trim() || message.trim() || category.trim()) {
+      setInputText(
+        buildChatPromptFromNotification({
+          title,
+          message,
+          category,
+          source,
+        })
+      );
+    }
+  }, [searchParams.category, searchParams.draft, searchParams.message, searchParams.source, searchParams.title]);
 
   const isDarkUi = useMemo(() => {
     const isNight = currentHour >= 19 || currentHour < 5;
@@ -153,54 +169,17 @@ export default function Chat() {
     : 'rounded-2xl border border-white/70 bg-white/60';
 
   useEffect(() => {
-    let active = true;
-
-    const loadChatHistory = async () => {
-      try {
-        if (!chatbotSupabase) return;
-
-        const deviceId = await getCurrentDeviceId();
-        if (!deviceId || !active) return;
-
-        const { data, error } = await chatbotSupabase
-          .from('chat_history')
-          .select('id, role, content, created_at')
-          .eq('device_id', deviceId)
-          .order('created_at', { ascending: false })
-          .limit(MAX_PERSISTED_MESSAGES);
-
-        if (error || !Array.isArray(data)) return;
-
-        const restored: Message[] = (data as ChatHistoryRow[])
-          .slice()
-          .reverse()
-          .map((row) => ({
-            id: String(row.id),
-            text: row.content,
-            sender: row.role === 'user' ? 'user' : 'bot',
-          }));
-
-        if (restored.length > 0) {
-          setMessages(restored);
-        }
-      } catch {
-        // ignore restore errors
-      }
-    };
-
-    loadChatHistory();
-
-    return () => {
-      active = false;
-    };
-  }, []);
+    void loadChatHistory();
+  }, [loadChatHistory]);
 
   const persistMessageToDb = async (role: 'user' | 'bot', content: string) => {
     try {
-      if (!chatbotSupabase || !content.trim()) return;
+      if (!content.trim()) return;
 
       const deviceId = await getCurrentDeviceId();
       if (!deviceId) return;
+
+      const chatbotSupabase = createSupabaseClientForDevice(deviceId);
 
       await chatbotSupabase.from('chat_history').insert({
         device_id: deviceId,
@@ -223,13 +202,15 @@ export default function Chat() {
   // Reference untuk autoscroll ke bawah
   const flatListRef = useRef<FlatList>(null);
 
+  const isChatHydrated = hasLoadedHistory && !isLoadingHistory;
+
   const handleSend = async () => {
     const cleaned = inputText.trim();
     if (!cleaned || isLoading) return; // Cegah spam klik saat loading
 
     // 1. Tambahkan pesan user
     const userMessage: Message = { id: Date.now().toString(), text: cleaned, sender: 'user' };
-    setMessages((prev) => [...prev, userMessage]);
+    appendMessage(userMessage);
     void persistMessageToDb('user', cleaned);
     setInputText('');
     setInputHeight(44);
@@ -259,7 +240,7 @@ export default function Chat() {
       text: localizedReply,
       sender: 'bot',
     };
-    setMessages((prev) => [...prev, botMessage]);
+    appendMessage(botMessage);
     void persistMessageToDb('bot', localizedReply);
 
     // 5. Matikan loading
@@ -267,154 +248,158 @@ export default function Chat() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-transparent" style={{ paddingBottom: INPUT_BOTTOM_GAP }}>
-      {/* Header WAMchat */}
-      <View className={`mx-4 mt-3 px-4 py-4 ${headerSurfaceClass}`}>
-        <Text className="text-xl font-bold" style={{ color: chatTheme.titleColor }}>
-          WAMchat
-        </Text>
-        <Text className="mt-1 text-sm" style={{ color: chatTheme.placeholder }}>
-          Ask me anything about the weather or get personalized recommendations!
-        </Text>
-      </View>
-
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : INPUT_BOTTOM_GAP}
-        className="flex-1">
-        {/* Area Daftar Pesan */}
-        {isLoading && messages.length === 0 ? (
-          <ChatSkeleton />
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(item) => item.id}
-            className="flex-1 px-3"
-            contentContainerStyle={{ paddingTop: 10, paddingBottom: 20 }}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-            ListFooterComponent={
-              isLoading && messages.length > 0 ? (
-                <View className="pt-2">
-                  <Text className="mb-2 text-xs" style={{ color: chatTheme.placeholder }}>
-                    generating a response...
-                  </Text>
-
-                  <View
-                    className="min-w-[82%] self-start rounded-2xl rounded-tl-sm p-4"
-                    style={{ backgroundColor: chatTheme.botBubble }}>
-                    <View
-                      className="mb-3 h-4 rounded-full"
-                      style={{
-                        width: '92%',
-                        backgroundColor: chatTheme.inputBackground,
-                        opacity: 0.9,
-                      }}
-                    />
-                    <View
-                      className="mb-3 h-4 rounded-full"
-                      style={{
-                        width: '85%',
-                        backgroundColor: chatTheme.inputBackground,
-                        opacity: 0.85,
-                      }}
-                    />
-                    <View
-                      className="mb-3 h-4 rounded-full"
-                      style={{
-                        width: '76%',
-                        backgroundColor: chatTheme.inputBackground,
-                        opacity: 0.8,
-                      }}
-                    />
-                    <View
-                      className="h-4 rounded-full"
-                      style={{
-                        width: '54%',
-                        backgroundColor: chatTheme.inputBackground,
-                        opacity: 0.75,
-                      }}
-                    />
-                  </View>
-                </View>
-              ) : null
-            }
-            renderItem={({ item }) => (
-              <View
-                className={`my-1 max-w-[80%] rounded-2xl p-3 ${item.sender === 'user' ? 'self-end rounded-tr-sm' : 'self-start rounded-tl-sm'}`}
-                style={{
-                  backgroundColor:
-                    item.sender === 'user' ? chatTheme.userBubble : chatTheme.botBubble,
-                }}>
-                <Text
-                  style={{
-                    color: item.sender === 'user' ? chatTheme.userText : chatTheme.botText,
-                  }}>
-                  {parseBoldSegments(item.text).map((segment, idx) => (
-                    <Text
-                      key={`${item.id}-${idx}`}
-                      style={segment.bold ? { fontWeight: '700' } : undefined}>
-                      {segment.text}
-                    </Text>
-                  ))}
-                </Text>
-              </View>
-            )}
-          />
-        )}
-
-        {/* Area Input Pesan */}
-        <View className="p-3">
-          <View
-            className="flex-row items-end rounded-3xl px-2 py-1"
-            style={{
-              backgroundColor: chatTheme.inputBackground,
-              borderWidth: 1,
-              borderColor: chatTheme.inputBorder,
-            }}>
-            <TextInput
-              className="flex-1 px-4 py-2"
-              style={{
-                color: chatTheme.inputText,
-                minHeight: 44,
-                maxHeight: 140,
-                height: Math.min(140, Math.max(44, inputHeight)),
-                textAlignVertical: 'top',
-              }}
-              placeholder="Write a message..."
-              placeholderTextColor={chatTheme.placeholder}
-              value={inputText}
-              onChangeText={setInputText}
-              onContentSizeChange={(event) => {
-                setInputHeight(event.nativeEvent.contentSize.height);
-              }}
-              multiline
-              editable={!isLoading} // Kunci input saat loading
-            />
-
-            <TouchableOpacity
-              onPress={handleSend}
-              disabled={isLoading || !inputText.trim()}
-              className="items-center justify-center rounded-full p-2">
-              <View
-                className="items-center justify-center rounded-full"
-                style={{
-                  width: 40,
-                  height: 40,
-                  backgroundColor:
-                    !inputText.trim() || isLoading ? chatTheme.botBubble : chatTheme.sendIcon, // Ubah warna ikon kalau disable
-                  opacity: !inputText.trim() || isLoading ? 0.5 : 1,
-                }}>
-                <Ionicons name="send" size={20} color="#ffffff" />
-              </View>
-            </TouchableOpacity>
-          </View>
-
-          <Text className="mt-2 text-center text-xs" style={{ color: chatTheme.placeholder }}>
-            Double-check the important information.
+    !isChatHydrated ? (
+      <ChatSkeleton />
+    ) : (
+      <SafeAreaView className="flex-1 bg-transparent" style={{ paddingBottom: INPUT_BOTTOM_GAP }}>
+        {/* Header WAMchat */}
+        <View className={`mx-4 mt-3 px-4 py-4 ${headerSurfaceClass}`}>
+          <Text className="text-xl font-bold" style={{ color: chatTheme.titleColor }}>
+            WAMchat
+          </Text>
+          <Text className="mt-1 text-sm" style={{ color: chatTheme.placeholder }}>
+            Ask me anything about the weather or get personalized recommendations!
           </Text>
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : INPUT_BOTTOM_GAP}
+          className="flex-1">
+          {/* Area Daftar Pesan */}
+          {isLoading && messages.length === 0 ? (
+            <ChatSkeleton />
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(item) => item.id}
+              className="flex-1 px-3"
+              contentContainerStyle={{ paddingTop: 10, paddingBottom: 20 }}
+              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+              ListFooterComponent={
+                isLoading && messages.length > 0 ? (
+                  <View className="pt-2">
+                    <Text className="mb-2 text-xs" style={{ color: chatTheme.placeholder }}>
+                      generating a response...
+                    </Text>
+
+                    <View
+                      className="min-w-[82%] self-start rounded-2xl rounded-tl-sm p-4"
+                      style={{ backgroundColor: chatTheme.botBubble }}>
+                      <View
+                        className="mb-3 h-4 rounded-full"
+                        style={{
+                          width: '92%',
+                          backgroundColor: chatTheme.inputBackground,
+                          opacity: 0.9,
+                        }}
+                      />
+                      <View
+                        className="mb-3 h-4 rounded-full"
+                        style={{
+                          width: '85%',
+                          backgroundColor: chatTheme.inputBackground,
+                          opacity: 0.85,
+                        }}
+                      />
+                      <View
+                        className="mb-3 h-4 rounded-full"
+                        style={{
+                          width: '76%',
+                          backgroundColor: chatTheme.inputBackground,
+                          opacity: 0.8,
+                        }}
+                      />
+                      <View
+                        className="h-4 rounded-full"
+                        style={{
+                          width: '54%',
+                          backgroundColor: chatTheme.inputBackground,
+                          opacity: 0.75,
+                        }}
+                      />
+                    </View>
+                  </View>
+                ) : null
+              }
+              renderItem={({ item }) => (
+                <View
+                  className={`my-1 max-w-[80%] rounded-2xl p-3 ${item.sender === 'user' ? 'self-end rounded-tr-sm' : 'self-start rounded-tl-sm'}`}
+                  style={{
+                    backgroundColor:
+                      item.sender === 'user' ? chatTheme.userBubble : chatTheme.botBubble,
+                  }}>
+                  <Text
+                    style={{
+                      color: item.sender === 'user' ? chatTheme.userText : chatTheme.botText,
+                    }}>
+                    {parseBoldSegments(item.text).map((segment, idx) => (
+                      <Text
+                        key={`${item.id}-${idx}`}
+                        style={segment.bold ? { fontWeight: '700' } : undefined}>
+                        {segment.text}
+                      </Text>
+                    ))}
+                  </Text>
+                </View>
+              )}
+            />
+          )}
+
+          {/* Area Input Pesan */}
+          <View className="p-3">
+            <View
+              className="flex-row items-end rounded-3xl px-2 py-1"
+              style={{
+                backgroundColor: chatTheme.inputBackground,
+                borderWidth: 1,
+                borderColor: chatTheme.inputBorder,
+              }}>
+              <TextInput
+                className="flex-1 px-4 py-2"
+                style={{
+                  color: chatTheme.inputText,
+                  minHeight: 44,
+                  maxHeight: 140,
+                  height: Math.min(140, Math.max(44, inputHeight)),
+                  textAlignVertical: 'top',
+                }}
+                placeholder="Write a message..."
+                placeholderTextColor={chatTheme.placeholder}
+                value={inputText}
+                onChangeText={setInputText}
+                onContentSizeChange={(event) => {
+                  setInputHeight(event.nativeEvent.contentSize.height);
+                }}
+                multiline
+                editable={!isLoading} // Kunci input saat loading
+              />
+
+              <TouchableOpacity
+                onPress={handleSend}
+                disabled={isLoading || !inputText.trim()}
+                className="items-center justify-center rounded-full p-2">
+                <View
+                  className="items-center justify-center rounded-full"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    backgroundColor:
+                      !inputText.trim() || isLoading ? chatTheme.botBubble : chatTheme.sendIcon, // Ubah warna ikon kalau disable
+                    opacity: !inputText.trim() || isLoading ? 0.5 : 1,
+                  }}>
+                  <Ionicons name="send" size={20} color="#ffffff" />
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <Text className="mt-2 text-center text-xs" style={{ color: chatTheme.placeholder }}>
+              Double-check the important information.
+            </Text>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    )
   );
 }
