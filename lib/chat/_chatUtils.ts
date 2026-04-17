@@ -1,6 +1,4 @@
 import type { ColorValue } from 'react-native';
-import { Platform } from 'react-native';
-import * as Application from 'expo-application';
 import { useWeatherStore } from '../weather/weatherStore';
 import { getCurrentDeviceId } from '../explore/markedLocationsService';
 
@@ -124,26 +122,14 @@ function buildWeatherPrompt(weather: any | null): string {
 // Fungsi pembantu untuk mendapatkan Device ID
 async function getUniqueDeviceId(): Promise<string> {
   try {
-    // Prioritaskan ID device yang sudah dipakai lintas fitur (marked locations / devices table)
+    // Gunakan hanya ID device terpusat dari marked locations / devices table.
     const sharedDeviceId = await getCurrentDeviceId();
     if (sharedDeviceId) return sharedDeviceId;
-
-    if (Platform.OS === 'android') {
-      const maybeAndroidId =
-        typeof (Application as any).getAndroidId === 'function'
-          ? (Application as any).getAndroidId()
-          : null;
-      return (
-        (typeof maybeAndroidId === 'string' && maybeAndroidId.length > 0 ? maybeAndroidId : null) ??
-        'unknown_android'
-      );
-    } else if (Platform.OS === 'ios') {
-      const iosId = await Application.getIosIdForVendorAsync();
-      return iosId || 'unknown_ios';
-    }
   } catch (error) {
     console.warn('Gagal mendapatkan Device ID:', error);
   }
+
+  console.warn('Device ID dari marked locations tidak tersedia.');
   return 'unknown_device';
 }
 
