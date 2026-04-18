@@ -65,12 +65,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           '',
       },
     },
-    "googleServicesFile": "./google-services.json"
+    "googleServicesFile": "./google-services.json",
+    "jsEngine": "hermes"
   },
   extra: {
     eas: {
       projectId: process.env.EXPO_PUBLIC_ID_PROJECT,
     },
   },
-  jsEngine: 'hermes',
 });
