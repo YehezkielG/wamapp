@@ -76,7 +76,7 @@ export const useNotificationSettingsStore = create<NotificationSettingsStore>((s
       if (!Device.isDevice) {
         Alert.alert(
           'Push Notifications',
-          'Push notifications (token) biasanya butuh perangkat fisik (HP asli). Kamu masih bisa pakai local notifications, tapi token mungkin tidak tersedia.'
+          'Push notifications (token) usually require a physical device. You can still use local notifications, but the token may not be available.'
         );
       }
 
@@ -92,12 +92,12 @@ export const useNotificationSettingsStore = create<NotificationSettingsStore>((s
       if (finalStatus !== 'granted') {
         set({ enabled: false });
         Alert.alert(
-          'Izin Notifikasi Ditolak',
-          'Notifikasi belum bisa diaktifkan karena izin belum diberikan. Kamu bisa mengaktifkannya lewat Settings perangkat.',
+          'Notification Permission Denied',
+          'Notifications cannot be enabled yet because permission has not been granted. You can enable it from the device Settings.',
           [
-            { text: 'Batal', style: 'cancel' },
+            { text: 'Cancel', style: 'cancel' },
             {
-              text: 'Buka Settings',
+              text: 'Open Settings',
               onPress: () => {
                 void Linking.openSettings();
               },

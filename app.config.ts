@@ -35,28 +35,19 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   web: {
     favicon: './assets/favicon.png',
   },
-  ios: {
-    supportsTablet: true,
-    config: {
-      googleMapsApiKey:
-        process.env.GOOGLE_MAPS_IOS_API_KEY ||
-        process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
-        '',
-    },
-  },
   android: {
     package: 'com.zekiell12.wamapp',
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#ffffff',
     },
-    "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION", // INI KUNCINYA!
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION"
-      ],
+    permissions: [
+      'ACCESS_COARSE_LOCATION',
+      'ACCESS_FINE_LOCATION',
+      'ACCESS_BACKGROUND_LOCATION',
+      'FOREGROUND_SERVICE',
+      'FOREGROUND_SERVICE_LOCATION',
+    ],
     config: {
       googleMaps: {
         apiKey:
@@ -65,12 +56,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           '',
       },
     },
-    "googleServicesFile": "./google-services.json",
-    "jsEngine": "hermes"
+    googleServicesFile: './google-services.json',
+    jsEngine: 'hermes',
   },
   extra: {
     eas: {
       projectId: process.env.EXPO_PUBLIC_ID_PROJECT,
     },
   },
+  // NOTE: Build profiles belong in `eas.json`. Keep EAS build configuration in that file.
 });

@@ -68,8 +68,8 @@ export default function Settings() {
     }
 
     if (itemId === 'clearNotifications') {
-      Alert.alert('Clear notifications?', 'Semua notifikasi akan dihapus dari perangkat ini.', [
-        { text: 'Batal', style: 'cancel' },
+      Alert.alert('Clear notifications?', 'All notifications will be removed from this device.', [
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Clear',
           style: 'destructive',

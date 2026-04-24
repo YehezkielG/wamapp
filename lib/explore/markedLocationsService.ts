@@ -253,10 +253,12 @@ export async function clearDevicePushToken() {
   const deviceId = await resolveHardwareDeviceId();
   if (!deviceId) return false;
 
+  const revokedToken = `revoked:${deviceId}:${Date.now()}`;
+
   const { error } = await supabase.from('devices').upsert(
     {
       id: deviceId,
-      push_token: null,
+      push_token: revokedToken,
       last_active: new Date().toISOString(),
     },
     { onConflict: 'id' }
@@ -315,14 +317,21 @@ export async function updateDeviceLocationIfMoved(
 
   if (!shouldUpdate) return false;
 
-  const { error: updateErr } = await supabase
+  const { data: updatedRow, error: updateErr } = await supabase
     .from('devices')
     .update({ latitude, longitude, last_active: new Date().toISOString() })
-    .eq('id', deviceId);
+    .eq('id', deviceId)
+    .select('id')
+    .maybeSingle<DeviceRow>();
 
   if (updateErr) {
     // log but don't throw from background
     console.warn('Failed to update device location:', updateErr.message);
+    return false;
+  }
+
+  if (!updatedRow?.id) {
+    console.warn('Skipped location update: device row not found yet (push token may not be saved).');
     return false;
   }
 
@@ -355,13 +364,20 @@ export async function saveDeviceLocationNow(latitude: number, longitude: number)
       return false;
     }
 
-    const { error } = await supabase
+    const { data: updatedRow, error } = await supabase
       .from('devices')
       .update({ latitude, longitude, last_active: new Date().toISOString() })
-      .eq('id', deviceId);
+      .eq('id', deviceId)
+      .select('id')
+      .maybeSingle<DeviceRow>();
 
     if (error) {
       console.warn('Failed to save startup device location:', error.message);
+      return false;
+    }
+
+    if (!updatedRow?.id) {
+      console.warn('Skipped startup location save: device row not found yet (push token may not be saved).');
       return false;
     }
 

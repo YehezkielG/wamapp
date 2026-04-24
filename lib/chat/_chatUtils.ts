@@ -23,25 +23,72 @@ export type ChatPromptSource = {
   source?: 'dashboard' | 'history' | 'explore' | 'expo_push';
 };
 
+function resolveCountryCodeFromRuntime(): string {
+  try {
+    const timezoneName = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    const normalizedTimezone = timezoneName.trim();
+
+    if (
+      normalizedTimezone === 'Asia/Jakarta' ||
+      normalizedTimezone === 'Asia/Makassar' ||
+      normalizedTimezone === 'Asia/Jayapura'
+    ) {
+      return 'ID';
+    }
+
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
+    const regionMatch = locale.match(/[-_]([A-Za-z]{2})$/);
+    if (regionMatch?.[1]) {
+      return regionMatch[1].toUpperCase();
+    }
+  } catch {
+    return 'ID';
+  }
+
+  return 'ID';
+}
+
 export function buildChatPromptFromNotification(source: ChatPromptSource): string {
-  const title = source.title?.trim() || 'Notifikasi cuaca';
-  const message = source.message?.trim() || 'Tidak ada detail tambahan.';
-  const category = source.category?.trim() || 'umum';
+  const countryCode = resolveCountryCodeFromRuntime();
+  const isIndonesia = countryCode === 'ID';
+
+  const title = source.title?.trim() || (isIndonesia ? 'Notifikasi cuaca' : 'Weather notification');
+  const message =
+    source.message?.trim() ||
+    (isIndonesia ? 'Tidak ada detail tambahan.' : 'No additional details available.');
+  const category = source.category?.trim() || (isIndonesia ? 'umum' : 'general');
+
   const originLabel =
     source.source === 'expo_push'
-      ? 'push notification'
+      ? isIndonesia
+        ? 'notifikasi push'
+        : 'push notification'
       : source.source === 'history'
-        ? 'riwayat notifikasi'
+        ? isIndonesia
+          ? 'riwayat notifikasi'
+          : 'notification history'
         : source.source === 'explore'
-          ? 'explore'
+          ? isIndonesia
+            ? 'fitur explore'
+            : 'explore'
           : 'dashboard';
 
+  if (isIndonesia) {
+    return [
+      `Saya membuka ${originLabel} dengan kategori ${category}.`,
+      `Judul notifikasi: ${title}`,
+      `Isi notifikasi: ${message}`,
+      '',
+      'Tolong jelaskan arti notifikasi ini, tingkat risikonya, dan langkah yang sebaiknya saya lakukan setelah ini.',
+    ].join('\n');
+  }
+
   return [
-    `Saya membuka ${originLabel} dengan kategori ${category}.`,
-    `Judul notifikasi: ${title}`,
-    `Isi notifikasi: ${message}`,
+    `I opened ${originLabel} with category ${category}.`,
+    `Notification title: ${title}`,
+    `Notification content: ${message}`,
     '',
-    'Tolong bantu jelaskan arti notifikasi ini, tingkat risikonya, dan langkah yang sebaiknya saya lakukan.',
+    'Please explain what this notification means, the risk level, and what I should do next.',
   ].join('\n');
 }
 
@@ -125,7 +172,7 @@ function buildWeatherPrompt(weather: any | null): string {
   );
   // Instruction for the LLM: prefer human-readable labels over numeric codes
   parts.push(
-    "PENTING: Saat menyebut kondisi cuaca dalam jawabanmu, gunakan keterangan yang dapat dimengerti manusia (mis. 'Cerah', 'Hujan', 'Badai petir') dan bukan hanya kode numerik. Jika payload menyediakan keduanya, prioritaskan keterangan (label)."
+    "IMPORTANT: When describing weather conditions in your answer, use human-readable labels (e.g. 'Clear', 'Rain', 'Thunderstorm') instead of only numeric codes. If the payload provides both, prioritize the label."
   );
   parts.push(`Location: ${weather.locationName ?? 'unknown'}`);
   parts.push(`Current temperature: ${weather.temperatureC ?? 'unknown'} °C`);
@@ -154,10 +201,9 @@ function buildWeatherPrompt(weather: any | null): string {
   return parts.join('\n');
 }
 
-// Fungsi pembantu untuk mendapatkan Device ID
 async function getUniqueDeviceId(): Promise<string> {
   try {
-    // Prioritaskan ID device yang sudah dipakai lintas fitur (marked locations / devices table)
+    // Prioritize the device ID already used across features (marked locations / devices table)
     const sharedDeviceId = await getCurrentDeviceId();
     if (sharedDeviceId) return sharedDeviceId;
 
@@ -175,9 +221,17 @@ async function getUniqueDeviceId(): Promise<string> {
       return iosId || 'unknown_ios';
     }
   } catch (error) {
-    console.warn('Gagal mendapatkan Device ID:', error);
+    console.warn('Failed to retrieve Device ID:', error);
   }
   return 'unknown_device';
+}
+
+async function detectCountryCode(): Promise<string> {
+  try {
+    return resolveCountryCodeFromRuntime();
+  } catch {
+    return 'ID';
+  }
 }
 
 async function getChatAccessToken(deviceId: string, forceRefresh = false): Promise<string> {
@@ -201,7 +255,7 @@ async function getChatAccessToken(deviceId: string, forceRefresh = false): Promi
   });
 
   if (!response.ok) {
-    throw new Error(`Gagal mengambil token chat (status: ${response.status})`);
+    throw new Error(`Failed to retrieve chat token (status: ${response.status})`);
   }
 
   const data = await response.json();
@@ -209,7 +263,7 @@ async function getChatAccessToken(deviceId: string, forceRefresh = false): Promi
   const expiresIn = Number.isFinite(data?.expires_in) ? Number(data.expires_in) : 600;
 
   if (!token) {
-    throw new Error('Token chat tidak valid dari server.');
+    throw new Error('Invalid chat token returned by the server.');
   }
 
   chatAccessTokenCache = {
@@ -229,6 +283,7 @@ async function postChatMessage(params: {
   accessToken: string;
   timezoneName: string | null;
   utcOffsetMinutes: number;
+  countryCode: string;
 }): Promise<Response> {
   return fetch(CHAT_API_URL, {
     method: 'POST',
@@ -243,6 +298,7 @@ async function postChatMessage(params: {
       system_instructions: params.systemPrompt,
       timezone_name: params.timezoneName,
       utc_offset_minutes: params.utcOffsetMinutes,
+      country_code: params.countryCode,
     }),
   });
 }
@@ -253,6 +309,7 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
 
   const timezoneName = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
   const utcOffsetMinutes = new Date().getTimezoneOffset() * -1;
+  const countryCode = await detectCountryCode();
 
   const weatherPayload = weatherState
     ? {
@@ -265,7 +322,7 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
 
   const systemPrompt = buildWeatherPrompt(weatherPayload);
 
-  // Ambil Device ID sebelum mengirim request
+  // Get the device ID before sending the request
   const deviceId = await getUniqueDeviceId();
   let accessToken = '';
 
@@ -280,6 +337,7 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
         system_instructions: systemPrompt,
         timezone_name: timezoneName,
         utc_offset_minutes: utcOffsetMinutes,
+        country_code: countryCode,
         token_attached: Boolean(accessToken),
       });
     }
@@ -296,6 +354,7 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
       accessToken,
       timezoneName,
       utcOffsetMinutes,
+      countryCode,
     });
 
     if (response.status === 401) {
@@ -308,6 +367,7 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
         accessToken,
         timezoneName,
         utcOffsetMinutes,
+        countryCode,
       });
     }
 
@@ -320,9 +380,9 @@ export async function sendMessageToRAGBackend(message: string): Promise<string> 
     if (data && typeof data.reply === 'string') return data.reply;
     if (data && typeof data.answer === 'string') return data.answer;
 
-    return 'Maaf, server chat tidak merespons dengan jawaban yang valid.';
+    return 'Sorry, the chat server did not return a valid response.';
   } catch (error) {
     console.error('Error dari backend RAG:', error);
-    return 'Maaf, koneksi WAMchat ke server terputus. Coba periksa jaringanmu.';
+    return 'Sorry, the WAMchat connection to the server was interrupted. Please check your network.';
   }
 }

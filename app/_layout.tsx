@@ -11,14 +11,40 @@ import { usePushNotifications } from 'lib/usePushNotification';
 import { useEffect, useRef } from 'react';
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
+import { useWeatherStore } from '../lib/weather/weatherStore';
+import { showPopup } from '../lib/inAppPopup';
 import {
   saveDeviceLocationNow,
   updateDeviceLocationFromCoords,
 } from '../lib/explore/markedLocationsService';
 
 const LOCATION_TASK_NAME = 'background-location-task';
+const LOCATION_TRACKING_DISTANCE_METERS = 500;
 
-// DAFTARKAN TASK DI LUAR KOMPONEN (Penting!)
+function weatherCodeToLabelId(code?: number | null): string {
+  if (code === 0) return 'Clear';
+  if (code === 1 || code === 2) return 'Partly Cloudy';
+  if (code === 3) return 'Cloudy';
+  if (code === 45 || code === 48) return 'Foggy';
+  if (code === 51 || code === 53 || code === 55) return 'Drizzle';
+  if (code === 61 || code === 63 || code === 65) return 'Rain';
+  if (code === 71 || code === 73 || code === 75) return 'Snow';
+  if (code === 80 || code === 81 || code === 82) return 'Heavy Rain';
+  if (code === 95 || code === 96 || code === 99) return 'Thunderstorm';
+  return 'Unknown';
+}
+
+function buildTrackingNotificationBody(
+  temperatureC?: number | null,
+  weatherCode?: number | null,
+  distanceMeters = LOCATION_TRACKING_DISTANCE_METERS
+) {
+  const tempText = typeof temperatureC === 'number' ? `${temperatureC.toFixed(1)}°C` : '--°C';
+  const weatherLabel = weatherCodeToLabelId(weatherCode);
+  return `Location updates every ${distanceMeters}m · Temp ${tempText} · Weather ${weatherLabel}`;
+}
+
+// REGISTER THE TASK OUTSIDE THE COMPONENT (Important!)
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) return;
   if (data) {
@@ -26,7 +52,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     try {
       const coords = locations[0]?.coords;
       if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
-        // update device location in DB if moved enough (helper checks 500m)
+        // Update the device location in the database if it moved enough (helper checks 500m)
         await updateDeviceLocationFromCoords(coords.latitude, coords.longitude);
       }
     } catch (err) {
@@ -38,8 +64,14 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 function LayoutInner() {
   console.log('[dbg] Render LayoutInner');
   const { colors } = useWeatherBackground();
+  const latestWeather = useWeatherStore((state) => state.data);
+  const latestWeatherRef = useRef(latestWeather);
   const foregroundWatcherRef = useRef<Location.LocationSubscription | null>(null);
   const hasSavedInitialLocationRef = useRef(false);
+
+  useEffect(() => {
+    latestWeatherRef.current = latestWeather;
+  }, [latestWeather]);
 
   useEffect(() => {
     const setupBackgroundLocation = async () => {
@@ -124,19 +156,38 @@ function LayoutInner() {
           const watcher = await Location.watchPositionAsync(
             {
               accuracy: Location.Accuracy.High,
-              distanceInterval: 100,
+              distanceInterval: LOCATION_TRACKING_DISTANCE_METERS,
               timeInterval: 15000,
             },
             (location) => {
               const coords = location?.coords;
               if (coords) {
-                const nextMinDistance = hasSavedInitialLocationRef.current ? 500 : 0;
-                void updateDeviceLocationFromCoords(
-                  coords.latitude,
-                  coords.longitude,
-                  nextMinDistance
-                );
-                hasSavedInitialLocationRef.current = true;
+                void (async () => {
+                  const minDistance = hasSavedInitialLocationRef.current
+                    ? LOCATION_TRACKING_DISTANCE_METERS
+                    : 0;
+
+                  const updated = await updateDeviceLocationFromCoords(
+                    coords.latitude,
+                    coords.longitude,
+                    minDistance
+                  );
+
+                  if (updated) {
+                    const currentWeather = useWeatherStore.getState().data;
+                    const tempC = currentWeather?.temperatureC;
+                    const weatherLabel = weatherCodeToLabelId(currentWeather?.weatherCode);
+
+                    showPopup({
+                      title: 'Location Updated',
+                      message: `Moved ≥ ${LOCATION_TRACKING_DISTANCE_METERS}m · Temp: ${typeof tempC === 'number' ? `${tempC.toFixed(1)}°C` : '--°C'} · Weather: ${weatherLabel}`,
+                      type: 'info',
+                      durationMs: 3000,
+                    });
+                  }
+
+                  hasSavedInitialLocationRef.current = true;
+                })();
               }
             }
           );
@@ -175,11 +226,15 @@ function LayoutInner() {
       if (!hasStarted) {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
           accuracy: Location.Accuracy.High,
-          distanceInterval: 100,
+          distanceInterval: LOCATION_TRACKING_DISTANCE_METERS,
           timeInterval: 15000,
           foregroundService: {
             notificationTitle: 'WAMApp Location Tracking',
-            notificationBody: 'Updating your location when you move 500 meters.',
+            notificationBody: buildTrackingNotificationBody(
+              latestWeatherRef.current?.temperatureC,
+              latestWeatherRef.current?.weatherCode,
+              LOCATION_TRACKING_DISTANCE_METERS
+            ),
           },
         });
       }

@@ -252,8 +252,8 @@ export default function History() {
   const unreadCount = notifications.filter((item) => !item.is_read).length;
 
   const handleClearNotifications = () => {
-    Alert.alert('Clear notifications?', 'Semua notifikasi akan dihapus dari perangkat ini.', [
-      { text: 'Batal', style: 'cancel' },
+    Alert.alert('Clear notifications?', 'All notifications will be removed from this device.', [
+      { text: 'Cancel', style: 'cancel' },
       {
         text: 'Clear',
         style: 'destructive',

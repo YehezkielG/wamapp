@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -57,6 +59,145 @@ const CLOUD_TILE_COLORS = ['#334155', '#64748b', '#94a3b8', '#cbd5e1', '#f8fafc'
 
 type LayerRanges = Record<ExploreLayerId, { min: number; max: number }>;
 
+type MarkedLocationRowProps = {
+  location: MarkedLocation;
+  weather: MarkedLocationWeather | undefined;
+  isSelected: boolean;
+  isDarkUi: boolean;
+  outsideMapTextClass: string;
+  outsideMapMutedTextClass: string;
+  onSelect: () => void;
+  onDelete: (locationId: string) => Promise<void>;
+};
+
+function MarkedLocationRow({
+  location,
+  weather,
+  isSelected,
+  isDarkUi,
+  outsideMapTextClass,
+  outsideMapMutedTextClass,
+  onSelect,
+  onDelete,
+}: MarkedLocationRowProps) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const [isBusy, setIsBusy] = useState(false);
+
+  const resetPosition = () => {
+    Animated.spring(translateX, {
+      toValue: 0,
+      speed: 18,
+      bounciness: 0,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const triggerDelete = async () => {
+    if (isBusy) return;
+    setIsBusy(true);
+
+    Animated.timing(translateX, {
+      toValue: -220,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(async () => {
+      try {
+        await onDelete(location.id);
+      } catch {
+        resetPosition();
+      } finally {
+        setIsBusy(false);
+      }
+    });
+  };
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dx) > 2 && Math.abs(gestureState.dy) < 18,
+        onPanResponderMove: (_, gestureState) => {
+          translateX.setValue(Math.max(-160, Math.min(40, gestureState.dx)));
+        },
+        onPanResponderRelease: (_, gestureState) => {
+          const shouldDelete = gestureState.dx < -26 || gestureState.vx < -0.12;
+
+          if (shouldDelete) {
+            void triggerDelete();
+            return;
+          }
+
+          resetPosition();
+        },
+        onPanResponderTerminate: () => {
+          resetPosition();
+        },
+      }),
+    [translateX, isBusy]
+  );
+
+  const cardOpacity = translateX.interpolate({
+    inputRange: [-160, -80, 0, 80],
+    outputRange: [0.25, 0.7, 1, 0.8],
+    extrapolate: 'clamp',
+  });
+
+  const deleteBgOpacity = translateX.interpolate({
+    inputRange: [-120, -24, 0],
+    outputRange: [1, 0.45, 0],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View className="relative overflow-hidden rounded-lg">
+      <Animated.View
+        pointerEvents="none"
+        className="absolute inset-y-0 right-0 items-end justify-center rounded-r-lg bg-rose-500/90 pr-4"
+        style={{ opacity: deleteBgOpacity }}>
+        <Ionicons name="trash-outline" size={16} color="#fff" />
+      </Animated.View>
+
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={{ transform: [{ translateX }], opacity: cardOpacity }}>
+        <Pressable
+          disabled={isBusy}
+          onPress={onSelect}
+          className={`w-full rounded-lg px-3 py-2 ${
+            isSelected
+              ? isDarkUi
+                ? 'border border-sky-300 bg-sky-500/25'
+                : 'border border-sky-400 bg-sky-100/85'
+              : isDarkUi
+                ? 'border border-white/25 bg-white/10'
+                : 'border border-slate-300 bg-white/75'
+          }`}>
+          <Text className={`text-sm ${outsideMapTextClass}`} numberOfLines={2}>
+            {location.locationName}
+          </Text>
+          <Text className={`mt-1 text-[10px] ${outsideMapMutedTextClass}`}>
+            {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+          </Text>
+          <View className="mt-2 flex-row items-center gap-2">
+            <Ionicons
+              name={weather?.iconName ?? 'help-circle-outline'}
+              size={16}
+              color={weather?.iconColor ?? '#64748b'}
+            />
+            <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
+              Current Weather: {weather?.label ?? 'Unknown'}
+            </Text>
+          </View>
+          <Text className={`mt-1 text-[11px] ${outsideMapMutedTextClass}`}>
+            Current Temp: {weather?.temperatureC?.toFixed(1) ?? '--'}°C · Current Wind:{' '}
+            {weather?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
+          </Text>
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+}
+
 const DEFAULT_RANGES: LayerRanges = {
   precipitation: { min: 0, max: 10 },
   wind: { min: 0, max: 80 },
@@ -105,7 +246,6 @@ export default function Explore() {
   const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
   const [currentHour, setCurrentHour] = useState(() => new Date().getHours());
   const [openedSearchMenuId, setOpenedSearchMenuId] = useState<string | null>(null);
-  const [openedHoldLocationId, setOpenedHoldLocationId] = useState<string | null>(null);
 
   const weatherCode = useWeatherStore((state) => state.data?.weatherCode);
 
@@ -521,14 +661,6 @@ export default function Explore() {
     }
   };
 
-  const closeHoldForLocation = (locationId: string) => {
-    setOpenedHoldLocationId((previous) => (previous === locationId ? null : previous));
-  };
-
-  const openHoldForLocation = (locationId: string) => {
-    setOpenedHoldLocationId(locationId);
-  };
-
   const mapHeight = useMemo(() => Math.round(Dimensions.get('window').height * 0.56), []);
 
   const layerRangeText = useMemo(() => {
@@ -814,65 +946,17 @@ export default function Explore() {
             <View className="mt-2 gap-2">
               {markedLocations.slice(0, 6).map((location) => {
                 return (
-                  <View key={location.id} className="relative overflow-hidden rounded-lg">
-                    <Pressable
-                      onPress={() => {
-                        if (openedHoldLocationId === location.id) {
-                          closeHoldForLocation(location.id);
-                          return;
-                        }
-                        handleSelectLocation(location);
-                      }}
-                      onLongPress={() => {
-                        openHoldForLocation(location.id);
-                      }}
-                      delayLongPress={250}
-                      className={`w-full rounded-lg px-3 py-2 ${
-                        selectedMarkedLocationId === location.id
-                          ? isDarkUi
-                            ? 'border border-sky-300 bg-sky-500/25'
-                            : 'border border-sky-400 bg-sky-100/85'
-                          : isDarkUi
-                            ? 'border border-white/25 bg-white/10'
-                            : 'border border-slate-300 bg-white/75'
-                      }`}>
-                      {openedHoldLocationId === location.id ? (
-                        <View className="absolute right-2 top-2 z-10">
-                          <Pressable
-                            onPress={() => {
-                              closeHoldForLocation(location.id);
-                              void handleDeleteMarkedLocation(location.id);
-                            }}
-                            className="rounded-md bg-rose-500 px-2 py-1">
-                            <Ionicons name="trash-outline" size={14} color="#ffffff" />
-                          </Pressable>
-                        </View>
-                      ) : null}
-
-                      <Text className={`text-sm ${outsideMapTextClass}`} numberOfLines={2}>
-                        {location.locationName}
-                      </Text>
-                      <Text className={`mt-1 text-[10px] ${outsideMapMutedTextClass}`}>
-                        {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
-                      </Text>
-                      <View className="mt-2 flex-row items-center gap-2">
-                        <Ionicons
-                          name={markedLocationWeather[location.id]?.iconName ?? 'help-circle-outline'}
-                          size={16}
-                          color={markedLocationWeather[location.id]?.iconColor ?? '#64748b'}
-                        />
-                        <Text className={`text-[11px] ${outsideMapMutedTextClass}`}>
-                          Current Weather: {markedLocationWeather[location.id]?.label ?? 'Unknown'}
-                        </Text>
-                      </View>
-                      <Text className={`mt-1 text-[11px] ${outsideMapMutedTextClass}`}>
-                        Current Temp:{' '}
-                        {markedLocationWeather[location.id]?.temperatureC?.toFixed(1) ?? '--'}°C ·
-                        Current Wind:{' '}
-                        {markedLocationWeather[location.id]?.windSpeedKmh?.toFixed(1) ?? '--'} km/h
-                      </Text>
-                    </Pressable>
-                  </View>
+                  <MarkedLocationRow
+                    key={location.id}
+                    location={location}
+                    weather={markedLocationWeather[location.id]}
+                    isSelected={selectedMarkedLocationId === location.id}
+                    isDarkUi={isDarkUi}
+                    outsideMapTextClass={outsideMapTextClass}
+                    outsideMapMutedTextClass={outsideMapMutedTextClass}
+                    onSelect={() => handleSelectLocation(location)}
+                    onDelete={handleDeleteMarkedLocation}
+                  />
                 );
               })}
             </View>
@@ -966,6 +1050,7 @@ export default function Explore() {
           </View>
         ) : null}
       </ScrollView>
+
     </KeyboardAvoidingView>
   );
 }

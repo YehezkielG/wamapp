@@ -199,26 +199,26 @@ export default function Chat() {
     return () => clearInterval(timerId);
   }, []);
 
-  // Reference untuk autoscroll ke bawah
+  // Reference for auto-scrolling to the bottom
   const flatListRef = useRef<FlatList>(null);
 
   const isChatHydrated = hasLoadedHistory && !isLoadingHistory;
 
   const handleSend = async () => {
     const cleaned = inputText.trim();
-    if (!cleaned || isLoading) return; // Cegah spam klik saat loading
+    if (!cleaned || isLoading) return; // Prevent spam clicks while loading
 
-    // 1. Tambahkan pesan user
+    // 1. Add the user message
     const userMessage: Message = { id: Date.now().toString(), text: cleaned, sender: 'user' };
     appendMessage(userMessage);
     void persistMessageToDb('user', cleaned);
     setInputText('');
     setInputHeight(44);
 
-    // 2. Mulai loading bot
+    // 2. Start bot loading
     setIsLoading(true);
 
-    // 3. Panggil fungsi modular dari utils
+    // 3. Call the modular helper from utils
     const botReply = await sendMessageToRAGBackend(cleaned);
     let localizedReply = botReply;
 
@@ -234,7 +234,7 @@ export default function Chat() {
       }
     }
 
-    // 4. Tambahkan balasan bot
+    // 4. Add the bot reply
     const botMessage: Message = {
       id: (Date.now() + 1).toString(),
       text: localizedReply,
@@ -243,7 +243,7 @@ export default function Chat() {
     appendMessage(botMessage);
     void persistMessageToDb('bot', localizedReply);
 
-    // 5. Matikan loading
+    // 5. Stop loading
     setIsLoading(false);
   };
 
@@ -266,7 +266,7 @@ export default function Chat() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : INPUT_BOTTOM_GAP}
           className="flex-1">
-          {/* Area Daftar Pesan */}
+          {/* Message list area */}
           {isLoading && messages.length === 0 ? (
             <ChatSkeleton />
           ) : (
@@ -347,7 +347,7 @@ export default function Chat() {
             />
           )}
 
-          {/* Area Input Pesan */}
+          {/* Message input area */}
           <View className="p-3">
             <View
               className="flex-row items-end rounded-3xl px-2 py-1"
@@ -373,7 +373,7 @@ export default function Chat() {
                   setInputHeight(event.nativeEvent.contentSize.height);
                 }}
                 multiline
-                editable={!isLoading} // Kunci input saat loading
+                editable={!isLoading} // Lock input while loading
               />
 
               <TouchableOpacity

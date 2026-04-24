@@ -8,7 +8,7 @@ import { saveDevicePushToken } from './explore/markedLocationsService';
 import { useNotificationSettingsStore } from './notifications/notificationSettingsStore';
 import { buildChatPromptFromNotification } from './chat/_chatUtils';
 
-// Pengaturan default agar notif muncul walau app sedang dibuka (foreground)
+// Default configuration so notifications appear while the app is in the foreground
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: useNotificationSettingsStore.getState().enabled,
@@ -76,7 +76,7 @@ export const usePushNotifications = () => {
   useEffect(() => {
     if (!enabled) return;
 
-    // Fungsi langsung dieksekusi saat aplikasi pertama kali dibuka
+    // Execute immediately when the app is opened for the first time
     registerForPushNotificationsAsync().then((token) => {
       if (token && token !== lastSavedTokenRef.current) {
         lastSavedTokenRef.current = token;
@@ -85,7 +85,7 @@ export const usePushNotifications = () => {
     });
   }, [enabled]);
 
-  // Fungsi untuk minta izin dan ambil token dari OS
+  // Function to request permission and obtain the token from the OS
   const registerForPushNotificationsAsync = async () => {
     let token;
 
@@ -98,7 +98,7 @@ export const usePushNotifications = () => {
       });
     }
 
-    // Wajib di HP asli, emulator/simulator sering gagal dapet token
+    // A physical device is required; emulators/simulators often fail to obtain a token
     if (Device.isDevice) {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
@@ -109,26 +109,26 @@ export const usePushNotifications = () => {
       }
 
       if (finalStatus !== 'granted') {
-        Alert.alert('Gagal', 'Izin notifikasi tidak diberikan!');
+        Alert.alert('Failed', 'Notification permission was not granted!');
         return;
       }
 
       token = (await Notifications.getExpoPushTokenAsync()).data;
     } else {
-      console.log('Push notification harus di-test di perangkat fisik (HP Asli).');
+      console.log('Push notifications must be tested on a physical device.');
     }
 
     return token;
   };
 
-  // Fungsi untuk simpan/update ke Supabase
+  // Function to save/update the token in Supabase
   const saveTokenToDatabase = async (pushToken: string) => {
     try {
       const saved = await saveDevicePushToken(pushToken);
       if (!saved) {
-        console.error('Gagal simpan token ke DB: device ID tidak tersedia');
+        console.error('Failed to save token to the database: device ID is unavailable');
       } else {
-        console.log('Token berhasil diamankan di Supabase:', pushToken);
+        console.log('Token saved successfully in Supabase:', pushToken);
       }
     } catch (err) {
       console.error('Supabase Error:', err);
