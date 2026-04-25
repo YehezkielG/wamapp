@@ -14,6 +14,7 @@ export type MarkedLocation = {
 };
 
 let cachedDeviceId: string | null | undefined;
+const LOCAL_ONLY_PUSH_TOKEN_PREFIX = 'local-only:';
 
 type DeviceRow = {
   id: string;
@@ -134,6 +135,10 @@ async function resolveHardwareDeviceId() {
   return normalizeAsUuid(`${Platform.OS}:fallback:${model}:${osVersion}`);
 }
 
+function buildLocalOnlyPushToken(deviceId: string) {
+  return `${LOCAL_ONLY_PUSH_TOKEN_PREFIX}${deviceId}`;
+}
+
 export async function getCurrentDeviceId() {
   if (cachedDeviceId !== undefined) {
     return cachedDeviceId;
@@ -181,8 +186,24 @@ export async function getCurrentDeviceId() {
       return existing.id;
     }
 
-    cachedDeviceId = null;
-    return null;
+    const { data: inserted, error: insertError } = await supabase
+      .from('devices')
+      .insert({
+        id: deviceId,
+        push_token: buildLocalOnlyPushToken(deviceId),
+        last_active: new Date().toISOString(),
+      })
+      .select('id')
+      .single<DeviceRow>();
+
+    if (insertError) {
+      console.warn('Failed to create local-only device row:', insertError.message);
+      cachedDeviceId = null;
+      return null;
+    }
+
+    cachedDeviceId = inserted.id;
+    return inserted.id;
   }
 
   const { data, error } = await supabase

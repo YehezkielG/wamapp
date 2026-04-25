@@ -29,12 +29,11 @@ export default function WeatherAlertEmergencyCard({
 
     const diffMs = Date.now() - createdDate.getTime();
     const diffMin = Math.max(0, Math.floor(diffMs / 60000));
-
-    if (diffMin < 1) return 'Baru saja';
-    if (diffMin < 60) return `${diffMin} menit lalu`;
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin} minute${diffMin === 1 ? '' : 's'} ago`;
 
     const diffHour = Math.floor(diffMin / 60);
-    if (diffHour < 24) return `${diffHour} jam lalu`;
+    if (diffHour < 24) return `${diffHour} hour${diffHour === 1 ? '' : 's'} ago`;
 
     return createdDate.toLocaleString('id-ID', {
       dateStyle: 'medium',

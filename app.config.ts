@@ -30,7 +30,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         isAndroidBackgroundLocationEnabled: true,
         isIosBackgroundLocationEnabled: true,
       },
+      
     ],
+    [
+    "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }]
   ],
   web: {
     favicon: './assets/favicon.png',

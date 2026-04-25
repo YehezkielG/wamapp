@@ -114,7 +114,6 @@ function generateRandomAnomaly(): DummyAnomaly {
     {
       kind: 'rain',
       title: 'Heavy Rain Alert',
-        message: `Heavy rain expected (${randomInt(6, 25)} mm).`,
       severity: 'warning',
       value: randomInt(6, 25),
       unit: 'mm',
@@ -122,7 +121,6 @@ function generateRandomAnomaly(): DummyAnomaly {
     {
       kind: 'wind',
       title: 'Strong Wind Alert',
-        message: `Strong winds expected (${randomInt(40, 85)} km/h).`,
       severity: 'warning',
       value: randomInt(40, 85),
       unit: 'km/h',
@@ -130,7 +128,6 @@ function generateRandomAnomaly(): DummyAnomaly {
     {
       kind: 'thunderstorm',
       title: 'Thunderstorm Alert',
-        message: 'Potential thunderstorm in your area. Stay alert and seek shelter if conditions worsen.',
       severity: 'critical',
       value: 95,
       unit: 'weathercode',
@@ -138,7 +135,6 @@ function generateRandomAnomaly(): DummyAnomaly {
     {
       kind: 'heat',
       title: 'Heat Alert',
-        message: `High temperature expected (${randomInt(35, 42)}°C).`,
       severity: 'warning',
       value: randomInt(35, 42),
       unit: '°C',
@@ -146,7 +142,6 @@ function generateRandomAnomaly(): DummyAnomaly {
     {
       kind: 'cold',
       title: 'Cold Alert',
-        message: `Low temperature expected (${randomInt(-2, 5)}°C).`,
       severity: 'info',
       value: randomInt(-2, 5),
       unit: '°C',
@@ -154,6 +149,61 @@ function generateRandomAnomaly(): DummyAnomaly {
   ];
 
   return pickRandom(options);
+}
+
+function floorToNextQuarterHourUtc(date = new Date()) {
+  const cloned = new Date(date);
+  cloned.setUTCSeconds(0, 0);
+  const minute = cloned.getUTCMinutes();
+  const next = minute - (minute % 15) + 15;
+  cloned.setUTCMinutes(next);
+  return cloned;
+}
+
+function floorToQuarterHourUtc(date = new Date()) {
+  const cloned = new Date(date);
+  cloned.setUTCSeconds(0, 0);
+  const minute = cloned.getUTCMinutes();
+  cloned.setUTCMinutes(minute - (minute % 15));
+  return cloned;
+}
+
+function toSlotIso(date: Date) {
+  return date.toISOString().slice(0, 16) + ':00';
+}
+
+function formatRelativeHours(slotIsoStr: string) {
+  try {
+    const slotDate = new Date(slotIsoStr + 'Z');
+    const now = new Date();
+    const diffMs = slotDate.getTime() - now.getTime();
+    const hours = Math.round(diffMs / (1000 * 60 * 60));
+    if (hours <= 0) return 'now';
+    if (hours === 1) return 'in 1 hour';
+    return `in ${hours} hours`;
+  } catch {
+    return 'in a few hours';
+  }
+}
+
+function buildDummyAnomalyMessage(anomaly: DummyAnomaly, relativeText: string) {
+  if (anomaly.kind === 'thunderstorm') {
+    return `Potential thunderstorm ${relativeText}.`;
+  }
+
+  if (anomaly.kind === 'rain') {
+    return `Heavy rain forecast ${relativeText} (${anomaly.value.toFixed(1)} mm).`;
+  }
+
+  if (anomaly.kind === 'wind') {
+    return `Strong wind forecast ${relativeText} (${anomaly.value.toFixed(1)} km/h).`;
+  }
+
+  if (anomaly.kind === 'heat') {
+    return `High temperature forecast ${relativeText} (${anomaly.value.toFixed(1)}°C).`;
+  }
+
+  return `Low temperature forecast ${relativeText} (${anomaly.value.toFixed(1)}°C).`;
 }
 
 Deno.serve(async (request) => {
@@ -210,20 +260,29 @@ Deno.serve(async (request) => {
         if (!shouldNotify) continue;
 
         const anomalyCount = randomInt(1, 2);
+        const slotOffsetMinutes = randomInt(4, 20) * 15;
+        const slotDate = new Date(floorToQuarterHourUtc().getTime() + slotOffsetMinutes * 60 * 1000);
+        const slotIso = toSlotIso(slotDate);
+
         const rows = Array.from({ length: anomalyCount }).map(() => {
           const anomaly = generateRandomAnomaly();
+          const countdownText = formatRelativeHours(slotIso);
+          const countdownSeconds = Math.max(0, Math.round((new Date(slotIso + 'Z').getTime() - Date.now()) / 1000));
           return {
             device_id: device.id,
             title: anomaly.title,
-            message: anomaly.message,
+            message: buildDummyAnomalyMessage(anomaly, countdownText),
             category: 'weather-anomaly',
             data: {
-            source: 'simulated-random',
+              source: 'simulated-random',
               run_id: runId,
               anomaly_kind: anomaly.kind,
               severity: anomaly.severity,
               measured_value: anomaly.value,
               measured_unit: anomaly.unit,
+              slot_iso: slotIso,
+              countdown_seconds: countdownSeconds,
+              countdown_text: countdownText,
             },
             is_read: false,
           };
@@ -251,16 +310,16 @@ Deno.serve(async (request) => {
           for (const row of pushRows) {
             summary.pushAttempted += 1;
             try {
-              await sendExpoPush({
-                to: device.push_token,
-                title: row.title,
-                body: row.message,
-                data: {
-                  category: row.category,
-                  device_id: device.id,
-                  ...(row.data ?? {}),
-                },
-              });
+                await sendExpoPush({
+                  to: device.push_token,
+                  title: row.title,
+                  body: row.message,
+                  data: {
+                    category: row.category,
+                    device_id: device.id,
+                    ...(row.data ?? {}),
+                  },
+                });
               summary.pushSent += 1;
             } catch (pushError) {
               summary.pushFailed += 1;
