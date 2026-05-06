@@ -23,11 +23,10 @@ type NotificationRowProps = {
   item: NotificationHistoryRow;
   isDarkUi: boolean;
   onDelete: (notificationId: string) => Promise<void>;
-  onMarkUnread: (notificationId: string) => Promise<void>;
   onOpenChat: (item: NotificationHistoryRow) => void;
 };
 
-function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread, onOpenChat }: NotificationRowProps) {
+function NotificationRow({ item, isDarkUi, onDelete, onOpenChat }: NotificationRowProps) {
   const translateX = useRef(new Animated.Value(0)).current;
   const [isBusy, setIsBusy] = useState(false);
 
@@ -52,21 +51,17 @@ function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread, onOpenChat }:
   const titleClass = isDarkUi ? 'text-white' : 'text-slate-900';
   const messageClass = isDarkUi ? 'text-white/85' : 'text-slate-700';
   const mutedClass = isDarkUi ? 'text-white/65' : 'text-slate-500';
-  const runAction = async (action: 'delete' | 'markUnread') => {
+  const runDelete = async () => {
     if (isBusy) return;
     setIsBusy(true);
 
     Animated.timing(translateX, {
-      toValue: action === 'delete' ? -220 : 220,
+      toValue: -220,
       duration: 180,
       useNativeDriver: true,
     }).start(async () => {
       try {
-        if (action === 'delete') {
-          await onDelete(item.id);
-        } else {
-          await onMarkUnread(item.id);
-        }
+        await onDelete(item.id);
       } catch {
         Animated.spring(translateX, {
           toValue: 0,
@@ -86,19 +81,13 @@ function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread, onOpenChat }:
         onMoveShouldSetPanResponder: (_, gestureState) =>
           Math.abs(gestureState.dx) > 2 && Math.abs(gestureState.dy) < 18,
         onPanResponderMove: (_, gestureState) => {
-          translateX.setValue(Math.max(-160, Math.min(160, gestureState.dx)));
+          translateX.setValue(Math.max(-160, Math.min(0, gestureState.dx)));
         },
         onPanResponderRelease: (_, gestureState) => {
           const shouldDelete = gestureState.dx < -26 || gestureState.vx < -0.12;
-          const shouldMarkUnread = gestureState.dx > 26 || gestureState.vx > 0.12;
 
           if (shouldDelete) {
-            void runAction('delete');
-            return;
-          }
-
-          if (shouldMarkUnread) {
-            void runAction('markUnread');
+            void runDelete();
             return;
           }
 
@@ -118,18 +107,18 @@ function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread, onOpenChat }:
           }).start();
         },
       }),
-    [runAction, translateX]
+    [runDelete, translateX]
   );
 
   const cardOpacity = translateX.interpolate({
-    inputRange: [-160, -80, 0, 80, 160],
-    outputRange: [0.25, 0.7, 1, 0.7, 0.25],
+    inputRange: [-160, -80, 0],
+    outputRange: [0.25, 0.7, 1],
     extrapolate: 'clamp',
   });
 
   const backgroundOpacity = translateX.interpolate({
-    inputRange: [-120, -24, 0, 24, 120],
-    outputRange: [1, 0.45, 0, 0.45, 1],
+    inputRange: [-120, -24, 0],
+    outputRange: [1, 0.45, 0],
     extrapolate: 'clamp',
   });
 
@@ -139,9 +128,6 @@ function NotificationRow({ item, isDarkUi, onDelete, onMarkUnread, onOpenChat }:
         pointerEvents="none"
         className="absolute inset-y-0 left-0 right-0 flex-row"
         style={{ opacity: backgroundOpacity }}>
-        <View className="flex-1 items-start justify-center rounded-l-2xl bg-sky-500/90 pl-4">
-          <Ionicons name="mail-open-outline" size={18} color="#fff" />
-        </View>
         <View className="flex-1 items-end justify-center rounded-r-2xl bg-rose-500/90 pr-4">
           <Ionicons name="trash-outline" size={18} color="#fff" />
         </View>
@@ -192,7 +178,6 @@ export default function History() {
   const clearNotifications = useNotificationCenterStore((state) => state.clearNotifications);
   const deleteNotification = useNotificationCenterStore((state) => state.deleteNotification);
   const markNotificationsRead = useNotificationCenterStore((state) => state.markNotificationsRead);
-  const markNotificationUnread = useNotificationCenterStore((state) => state.markNotificationUnread);
   const notificationsEnabled = useNotificationSettingsStore((state) => state.enabled);
   const notificationBusy = useNotificationSettingsStore((state) => state.isBusy);
   const setNotificationsEnabled = useNotificationSettingsStore((state) => state.setEnabledFromUi);
@@ -346,14 +331,13 @@ export default function History() {
         </View>
       ) : (
         <View className="mt-4 gap-3">
-          <Text className={`text-xs font-semibold ${mutedClass}`}>Swipe left to delete • swipe right to mark unread</Text>
+          <Text className={`text-xs font-semibold ${mutedClass}`}>Swipe left to delete notification</Text>
           {notifications.map((item) => (
             <NotificationRow
               key={item.id}
               item={item}
               isDarkUi={isDarkUi}
               onDelete={deleteNotification}
-              onMarkUnread={markNotificationUnread}
               onOpenChat={handleOpenChatFromNotification}
             />
           ))}

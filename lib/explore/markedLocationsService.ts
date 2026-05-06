@@ -2,7 +2,7 @@ import * as Device from 'expo-device';
 import * as Application from 'expo-application';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { supabase } from '../supabaseClient';
+import { createSupabaseClientForDevice } from '../supabaseClient';
 
 export type MarkedLocation = {
   id: string;
@@ -79,17 +79,21 @@ function normalizeLocationRow(row: {
 }
 
 async function resolvePushToken() {
-  if (!Device.isDevice) return null;
-
-  const permission = await Notifications.getPermissionsAsync();
-  if (permission.status !== 'granted') return null;
-
   try {
+    if (!Device.isDevice) return null;
+
+    const permission = await Notifications.getPermissionsAsync();
+    if (permission.status !== 'granted') return null;
+
     const tokenResponse = await Notifications.getExpoPushTokenAsync();
     return tokenResponse.data ?? null;
   } catch {
     return null;
   }
+}
+
+function getDeviceScopedClient(deviceId: string | null) {
+  return createSupabaseClientForDevice(deviceId);
 }
 
 async function resolveHardwareDeviceId() {
@@ -151,16 +155,18 @@ export async function getCurrentDeviceId() {
   }
 
   const pushToken = await resolvePushToken();
+  const deviceClient = getDeviceScopedClient(deviceId);
 
   if (pushToken) {
-    const { data: byToken, error: byTokenError } = await supabase
+    const { data: byToken, error: byTokenError } = await deviceClient
       .from('devices')
       .select('id')
       .eq('push_token', pushToken)
       .maybeSingle<DeviceRow>();
 
     if (!byTokenError && byToken?.id) {
-      const { error: touchError } = await supabase
+      const touchClient = getDeviceScopedClient(byToken.id);
+      const { error: touchError } = await touchClient
         .from('devices')
         .update({ last_active: new Date().toISOString() })
         .eq('id', byToken.id);
@@ -175,7 +181,7 @@ export async function getCurrentDeviceId() {
   }
 
   if (!pushToken) {
-    const { data: existing, error: existingError } = await supabase
+    const { data: existing, error: existingError } = await deviceClient
       .from('devices')
       .select('id')
       .eq('id', deviceId)
@@ -186,7 +192,7 @@ export async function getCurrentDeviceId() {
       return existing.id;
     }
 
-    const { data: inserted, error: insertError } = await supabase
+    const { data: inserted, error: insertError } = await deviceClient
       .from('devices')
       .insert({
         id: deviceId,
@@ -206,7 +212,7 @@ export async function getCurrentDeviceId() {
     return inserted.id;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await deviceClient
     .from('devices')
     .upsert(
       {
@@ -230,15 +236,17 @@ export async function getCurrentDeviceId() {
 export async function saveDevicePushToken(pushToken: string) {
   const deviceId = await resolveHardwareDeviceId();
   if (!deviceId) return false;
+  const deviceClient = getDeviceScopedClient(deviceId);
 
-  const { data: byToken, error: byTokenError } = await supabase
+  const { data: byToken, error: byTokenError } = await deviceClient
     .from('devices')
     .select('id')
     .eq('push_token', pushToken)
     .maybeSingle<DeviceRow>();
 
   if (!byTokenError && byToken?.id) {
-    const { error: updateError } = await supabase
+    const tokenClient = getDeviceScopedClient(byToken.id);
+    const { error: updateError } = await tokenClient
       .from('devices')
       .update({ last_active: new Date().toISOString() })
       .eq('id', byToken.id);
@@ -252,7 +260,7 @@ export async function saveDevicePushToken(pushToken: string) {
     return true;
   }
 
-  const { error } = await supabase.from('devices').upsert(
+  const { error } = await deviceClient.from('devices').upsert(
     {
       id: deviceId,
       push_token: pushToken,
@@ -273,10 +281,11 @@ export async function saveDevicePushToken(pushToken: string) {
 export async function clearDevicePushToken() {
   const deviceId = await resolveHardwareDeviceId();
   if (!deviceId) return false;
+  const deviceClient = getDeviceScopedClient(deviceId);
 
   const revokedToken = `revoked:${deviceId}:${Date.now()}`;
 
-  const { error } = await supabase.from('devices').upsert(
+  const { error } = await deviceClient.from('devices').upsert(
     {
       id: deviceId,
       push_token: revokedToken,
@@ -313,8 +322,9 @@ export async function updateDeviceLocationIfMoved(
   minMeters = 500
 ) {
   if (!deviceId) return false;
+  const deviceClient = getDeviceScopedClient(deviceId);
 
-  const { data: deviceRow, error: fetchErr } = await supabase
+  const { data: deviceRow, error: fetchErr } = await deviceClient
     .from('devices')
     .select('latitude, longitude, push_token')
     .eq('id', deviceId)
@@ -338,7 +348,7 @@ export async function updateDeviceLocationIfMoved(
 
   if (!shouldUpdate) return false;
 
-  const { data: updatedRow, error: updateErr } = await supabase
+  const { data: updatedRow, error: updateErr } = await deviceClient
     .from('devices')
     .update({ latitude, longitude, last_active: new Date().toISOString() })
     .eq('id', deviceId)
@@ -385,7 +395,9 @@ export async function saveDeviceLocationNow(latitude: number, longitude: number)
       return false;
     }
 
-    const { data: updatedRow, error } = await supabase
+    const deviceClient = getDeviceScopedClient(deviceId);
+
+    const { data: updatedRow, error } = await deviceClient
       .from('devices')
       .update({ latitude, longitude, last_active: new Date().toISOString() })
       .eq('id', deviceId)
@@ -410,7 +422,9 @@ export async function saveDeviceLocationNow(latitude: number, longitude: number)
 }
 
 export async function listMarkedLocations(deviceId: string | null) {
-  let query = supabase
+  const deviceClient = getDeviceScopedClient(deviceId);
+
+  let query = deviceClient
     .from('marked_locations')
     .select('id, device_id, location_name, latitude, longitude, created_at')
     .order('created_at', { ascending: false })
@@ -432,7 +446,9 @@ export async function addMarkedLocation(input: {
   latitude: number;
   longitude: number;
 }) {
-  const { data, error } = await supabase
+  const deviceClient = getDeviceScopedClient(input.deviceId);
+
+  const { data, error } = await deviceClient
     .from('marked_locations')
     .insert({
       device_id: input.deviceId,
@@ -452,7 +468,8 @@ export async function addMarkedLocation(input: {
 
 export async function deleteMarkedLocation(locationId: string) {
   const deviceId = await getCurrentDeviceId();
-  let query = supabase.from('marked_locations').delete().eq('id', locationId);
+  const deviceClient = getDeviceScopedClient(deviceId);
+  let query = deviceClient.from('marked_locations').delete().eq('id', locationId);
 
   query = deviceId ? query.eq('device_id', deviceId) : query.is('device_id', null);
 
@@ -465,8 +482,9 @@ export async function deleteMarkedLocation(locationId: string) {
 
 export async function updateMarkedLocationName(locationId: string, locationName: string) {
   const deviceId = await getCurrentDeviceId();
+  const deviceClient = getDeviceScopedClient(deviceId);
 
-  let query = supabase
+  let query = deviceClient
     .from('marked_locations')
     .update({ location_name: locationName })
     .eq('id', locationId);

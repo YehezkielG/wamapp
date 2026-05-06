@@ -28,17 +28,20 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         locationAlwaysAndWhenInUsePermission:
           'Allow WAMApp to access your location always to keep location updates running in the background.',
         isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true,
         isIosBackgroundLocationEnabled: true,
       },
-      
     ],
     [
-    "expo-build-properties",
-        {
-          "android": {
-            "usesCleartextTraffic": true
-          }
-        }]
+      'expo-build-properties',
+      {
+        android: {
+          usesCleartextTraffic: true,
+          enableProguardInReleaseBuilds: true,
+          enableShrinkResourcesInReleaseBuilds: true,
+        },
+      },
+    ],
   ],
   web: {
     favicon: './assets/favicon.png',

@@ -6,7 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import ButtonTab from '../components/BottomTabBar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WeatherBackgroundProvider, useWeatherBackground } from '../components/WeatherBackgroundContext';
-import { Alert, Linking, StyleSheet, View } from 'react-native';
+import { Alert, Linking, Platform, StyleSheet, View } from 'react-native';
 import { usePushNotifications } from 'lib/usePushNotification';
 import { useEffect, useRef } from 'react';
 import * as TaskManager from 'expo-task-manager';
@@ -36,12 +36,11 @@ function weatherCodeToLabelId(code?: number | null): string {
 
 function buildTrackingNotificationBody(
   temperatureC?: number | null,
-  weatherCode?: number | null,
-  distanceMeters = LOCATION_TRACKING_DISTANCE_METERS
+  weatherCode?: number | null
 ) {
   const tempText = typeof temperatureC === 'number' ? `${temperatureC.toFixed(1)}°C` : '--°C';
   const weatherLabel = weatherCodeToLabelId(weatherCode);
-  return `Location updates every ${distanceMeters}m · Temp ${tempText} · Weather ${weatherLabel}`;
+  return `Location tracking active · Temp ${tempText} · Weather ${weatherLabel}`;
 }
 
 // REGISTER THE TASK OUTSIDE THE COMPONENT (Important!)
@@ -75,6 +74,34 @@ function LayoutInner() {
 
   useEffect(() => {
     const setupBackgroundLocation = async () => {
+      const backgroundAvailable = await Location.isBackgroundLocationAvailableAsync();
+      if (!backgroundAvailable) {
+        Alert.alert(
+          'Background Location Unavailable',
+          'Background location tracking is not available in this build. Use a development build or standalone app so the location task can run in the background.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        Alert.alert(
+          'Location Services Off',
+          'Turn on device location services to keep background tracking running.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => {
+                void Linking.openSettings();
+              },
+            },
+          ]
+        );
+        return;
+      }
+
       const foreground = await Location.requestForegroundPermissionsAsync();
       if (foreground.status !== 'granted') {
         Alert.alert(
@@ -91,6 +118,14 @@ function LayoutInner() {
           ]
         );
         return;
+      }
+
+      if (Platform.OS === 'android') {
+        try {
+          await Location.enableNetworkProviderAsync();
+        } catch (err) {
+          console.warn('Android network provider prompt failed', err);
+        }
       }
 
       // Save user location immediately when app opens
@@ -223,21 +258,28 @@ function LayoutInner() {
       }
 
       const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-      if (!hasStarted) {
-        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-          accuracy: Location.Accuracy.High,
-          distanceInterval: LOCATION_TRACKING_DISTANCE_METERS,
-          timeInterval: 15000,
-          foregroundService: {
-            notificationTitle: 'WAMApp Location Tracking',
-            notificationBody: buildTrackingNotificationBody(
-              latestWeatherRef.current?.temperatureC,
-              latestWeatherRef.current?.weatherCode,
-              LOCATION_TRACKING_DISTANCE_METERS
-            ),
-          },
-        });
+      if (hasStarted) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
       }
+
+      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+        accuracy: Location.Accuracy.High,
+        distanceInterval: LOCATION_TRACKING_DISTANCE_METERS,
+        timeInterval: 15000,
+        activityType: Location.ActivityType.OtherNavigation,
+        deferredUpdatesDistance: 0,
+        deferredUpdatesInterval: 0,
+        pausesUpdatesAutomatically: false,
+        showsBackgroundLocationIndicator: true,
+        foregroundService: {
+          notificationTitle: 'WAMApp Location Tracking',
+          notificationBody: buildTrackingNotificationBody(
+            latestWeatherRef.current?.temperatureC,
+            latestWeatherRef.current?.weatherCode
+          ),
+          notificationColor: '#4F46E5',
+        },
+      });
     };
 
     void setupBackgroundLocation();
