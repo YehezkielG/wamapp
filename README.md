@@ -4,7 +4,7 @@
 
 ## Repository
 
-- **Frontend Repo URL:** `https://github.com/<your-username>/<your-frontend-repo>`
+- **Chatbot-Api Repo URL:** `https://github.com/JOO-AJAAA/WAMApp-api-chatbot`
 
 ## Overview
 
