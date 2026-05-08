@@ -38,9 +38,9 @@ function buildTrackingNotificationBody(
   temperatureC?: number | null,
   weatherCode?: number | null
 ) {
-  const tempText = typeof temperatureC === 'number' ? `${temperatureC.toFixed(1)}°C` : '--°C';
-  const weatherLabel = weatherCodeToLabelId(weatherCode);
-  return `Location tracking active · Temp ${tempText} · Weather ${weatherLabel}`;
+  const tempText = typeof temperatureC === 'number' ? `${temperatureC.toFixed(1)}°C` : 'loading';
+  const weatherLabel = typeof weatherCode === 'number' ? weatherCodeToLabelId(weatherCode) : 'fetching';
+  return `Location tracking active · Temp: ${tempText} · Weather: ${weatherLabel}`;
 }
 
 // REGISTER THE TASK OUTSIDE THE COMPONENT (Important!)
@@ -64,16 +64,60 @@ function LayoutInner() {
   console.log('[dbg] Render LayoutInner');
   const { colors } = useWeatherBackground();
   const latestWeather = useWeatherStore((state) => state.data);
-  const latestWeatherRef = useRef(latestWeather);
   const foregroundWatcherRef = useRef<Location.LocationSubscription | null>(null);
+  const trackingServiceReadyRef = useRef(false);
+  const trackingNotificationBodyRef = useRef<string | null>(null);
   const hasSavedInitialLocationRef = useRef(false);
 
   useEffect(() => {
-    latestWeatherRef.current = latestWeather;
-  }, [latestWeather]);
+    const refreshTrackingNotification = async () => {
+      if (!trackingServiceReadyRef.current) return;
+
+      const nextBody = buildTrackingNotificationBody(
+        latestWeather?.temperatureC,
+        latestWeather?.weatherCode
+      );
+
+      if (trackingNotificationBodyRef.current === nextBody) return;
+
+      try {
+        const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+        if (!hasStarted) return;
+
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+          accuracy: Location.Accuracy.High,
+          distanceInterval: LOCATION_TRACKING_DISTANCE_METERS,
+          timeInterval: 15000,
+          activityType: Location.ActivityType.OtherNavigation,
+          deferredUpdatesDistance: 0,
+          deferredUpdatesInterval: 0,
+          pausesUpdatesAutomatically: false,
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: 'WAMApp Location Tracking',
+            notificationBody: nextBody,
+            notificationColor: '#4F46E5',
+          },
+        });
+
+        trackingNotificationBodyRef.current = nextBody;
+      } catch (err) {
+        console.warn('Tracking notification refresh failed', err);
+      }
+    };
+
+    void refreshTrackingNotification();
+  }, [latestWeather?.temperatureC, latestWeather?.weatherCode]);
 
   useEffect(() => {
     const setupBackgroundLocation = async () => {
+      try {
+        await useWeatherStore.getState().fetchWeather({ force: true });
+      } catch (err) {
+        console.warn('Initial weather refresh failed before location tracking setup', err);
+      }
+
       const backgroundAvailable = await Location.isBackgroundLocationAvailableAsync();
       if (!backgroundAvailable) {
         Alert.alert(
@@ -262,6 +306,11 @@ function LayoutInner() {
         await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
       }
 
+      const trackingNotificationBody = buildTrackingNotificationBody(
+        useWeatherStore.getState().data?.temperatureC,
+        useWeatherStore.getState().data?.weatherCode
+      );
+
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: Location.Accuracy.High,
         distanceInterval: LOCATION_TRACKING_DISTANCE_METERS,
@@ -273,13 +322,13 @@ function LayoutInner() {
         showsBackgroundLocationIndicator: true,
         foregroundService: {
           notificationTitle: 'WAMApp Location Tracking',
-          notificationBody: buildTrackingNotificationBody(
-            latestWeatherRef.current?.temperatureC,
-            latestWeatherRef.current?.weatherCode
-          ),
+          notificationBody: trackingNotificationBody,
           notificationColor: '#4F46E5',
         },
       });
+
+      trackingNotificationBodyRef.current = trackingNotificationBody;
+      trackingServiceReadyRef.current = true;
     };
 
     void setupBackgroundLocation();
